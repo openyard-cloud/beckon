@@ -79,9 +79,13 @@ export function validateConfig(raw) {
   if (!raw.projects || typeof raw.projects !== 'object' || Object.keys(raw.projects).length === 0) {
     errors.push('projects: add at least one project, e.g. { "myapp": { "path": "~/code/myapp", "channels": ["#myapp"] } }');
   } else {
+    const lowerNames = new Map();
     for (const [name, p] of Object.entries(raw.projects)) {
       const at = `projects.${name}`;
       if (!/^[a-z0-9][a-z0-9._-]*$/i.test(name)) errors.push(`${at}: project names may use letters, digits, dot, dash and underscore`);
+      const lower = name.toLowerCase();
+      if (lowerNames.has(lower)) errors.push(`${at}: "${lowerNames.get(lower)}" already uses this name (names ignore case)`);
+      lowerNames.set(lower, name);
       if (!p || typeof p !== 'object') { errors.push(`${at}: must be an object`); continue; }
       if (typeof p.path !== 'string' || !p.path) { errors.push(`${at}.path: required`); continue; }
       const path = expandHome(p.path);
