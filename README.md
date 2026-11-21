@@ -181,53 +181,64 @@ Screen control acts on the real desktop of the beckon machine. Keep it to the pr
 
 ## Passwords and one-time codes (optional)
 
-Claude never types a password or a one-time code, and never asks for one in Slack. When a sign-in needs one, the secret goes from you straight into the field:
+Claude never types a password or a one-time code, and never asks for one in Slack. When a sign-in needs one, the secret goes from your phone straight into the field, through a relay you deploy to your own Cloudflare account:
 
 1. Claude clicks the field, then runs `beckon-secret --label "Apple ID password" --kind password --app "Google Chrome" --domain apple.com`.
 2. The thread says what is being asked for. Each member in `users` gets a DM with an **Enter securely** link.
-3. The link opens a one-time form served by beckon on this machine. It is reachable only from your own devices over [Tailscale](https://tailscale.com), never from the public internet. You type the value on your phone.
-4. Before typing anything, beckon reads the focused field through Accessibility and checks:
-   - the app is the one named;
-   - a password goes into a password field;
-   - for web pages, the address is `https://` on the named domain or one of its subdomains.
+3. The link opens a one-time page on your relay. You type the value. The page encrypts it on the phone to a key that exists only in beckon on the Mac, and you confirm with your passkey (Face ID or Touch ID).
+4. The relay hands the ciphertext to beckon over beckon's own outbound connection. beckon then:
+   - checks the passkey signature;
+   - decrypts the value;
+   - reads the focused field through Accessibility and checks it: the app is the one named, a password goes into a password field, and for web pages the address is `https://` on the named domain or one of its subdomains.
 
    If any check fails, nothing is typed, and Claude is told why.
-5. beckon types the value with Peekaboo's `type --secret-stdin`, then overwrites it in memory. Claude only learns `filled`, `refused`, `cancelled` or `expired`.
+5. beckon types the value with Peekaboo's `type --secret-stdin` and overwrites it in memory. Claude only learns `filled`, `refused`, `cancelled` or `expired`.
+
+```
+phone ──(TLS: ciphertext + passkey signature)──▶ relay on Cloudflare ◀──(outbound WebSocket)── beckon on the Mac ──▶ focused field
+```
 
 How the secret is protected:
 
 | Concern | How it is handled |
 | --- | --- |
-| Network | The form listens on `127.0.0.1` only. Tailscale Serve publishes it over WireGuard to devices signed in to your tailnet; there is no port open to the internet |
-| The link | 256 random bits, one use, expires after `ttlMinutes` (5 by default). Sent by DM; the thread only says that a secret was requested |
-| The page | No scripts, a strict Content-Security-Policy, `no-store`, no referrer, no framing. Requests must use the published host name (stops DNS rebinding) and come from the page itself |
-| The value | Held as bytes and never made into a string. Passed to Peekaboo on stdin, so it never shows in the process list. Not logged, not put on the clipboard, not sent to Slack or Claude, and wiped after typing |
-| Wrong field | The focus check above runs just before typing. Domains must match whole labels, so `apple.com.evil.io` and `evilapple.com` do not pass |
+| The relay and Cloudflare | Only ever handle ciphertext. Each request gets a new ECDH P-256 key pair on the Mac. Its public half travels in the link's `#fragment`, which browsers never send to a server. The phone encrypts with HKDF-SHA256 and AES-256-GCM, bound to the request id. The private half never leaves beckon |
+| Someone else with the link | Cannot read anything: there is nothing to read. They also cannot submit a value of their own, because beckon requires your passkey's signature over the exact ciphertext, with user verification. A value signed by another passkey, without Face ID or Touch ID, on another site, or swapped after signing is refused |
+| The connection to the relay | beckon dials out, so no port is opened on the Mac. The relay sends a random challenge and beckon answers with an HMAC under `BECKON_RELAY_TOKEN`, so the token never crosses the wire. A new connection replaces the old one |
+| The link | 256 random bits, one use, expires after `ttlMinutes` (5 by default). Sent by DM; the thread only says that a secret was requested. The page drops the key from the address bar as soon as it opens |
+| The page | One script, served by your relay (`script-src 'self'`), and no third-party code. Strict CSP, `no-store`, no referrer, no framing, HSTS. Posts must come from the page's own origin. Request logs are off |
+| The value on the Mac | Held as bytes and never made into a string. Passed to Peekaboo on stdin, so it never shows in the process list. Not logged, not put on the clipboard, not sent to Slack or Claude, and wiped after typing |
+| Wrong field | The focus check runs just before typing. Domains must match whole labels, so `apple.com.evil.io` and `evilapple.com` do not pass |
 
 Set it up once:
 
-1. Install [Tailscale](https://tailscale.com/download) on the beckon machine and on your phone, and sign in on both. In the tailnet admin console, turn on MagicDNS and HTTPS certificates.
-2. Publish the form to your tailnet only (`serve`, not `funnel`):
+1. Deploy the relay from `relay/` to your Cloudflare account. It runs on the free plan: one Worker and one Durable Object.
 
    ```sh
-   tailscale serve --bg --https=443 http://127.0.0.1:8788
+   cd relay
+   npx wrangler deploy                      # prints https://beckon-relay.<you>.workers.dev
+   TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(48).toString('base64url'))")
+   printf '%s' "$TOKEN" | npx wrangler secret put RELAY_TOKEN
+   printf 'BECKON_RELAY_TOKEN=%s\n' "$TOKEN" >> ~/.beckon/env && unset TOKEN
    ```
 
-3. Add the address Tailscale shows to the config, then run `beckon service restart`:
+2. Add the relay to the config, then run `beckon service restart`:
 
    ```jsonc
-   "secretForm": {
-     "publicUrl": "https://my-mac.tailnet-name.ts.net",
-     "port": 8788,           // default
+   "secretRelay": {
+     "url": "https://beckon-relay.<you>.workers.dev",
      "ttlMinutes": 5         // default
    }
    ```
 
+3. DM beckon `passkey` and open the link on your phone to add a passkey. `passkeys` lists them; `remove passkey <id>` removes one. Until a passkey exists, beckon refuses secret requests.
+
 beckon builds its focus reader from `helpers/ax-focus.swift` the first time (it needs `swiftc` from Xcode or the Command Line Tools). It types with the Peekaboo build from [screen control](#screen-control-optional) (`peekaboo` and `beckon-ax` default to `~/.beckon/bin`). Both run with the Accessibility permission you gave for screen control.
 
-Two things to know:
-- A one-time code you type is visible in the field until it is submitted, so a screenshot Claude takes right then could show it. Codes expire quickly.
-- Anyone who can read the DM *and* is signed in to your tailnet could open the link first. Keep the tailnet to your own devices.
+Limits:
+- A one-time code is visible in the field until it is submitted, so a screenshot Claude takes right then could show it. Codes expire quickly.
+- The page script comes from your relay, so the relay deployment is part of what you trust. Deploy it from this repository, with your Cloudflare account protected by 2FA.
+- Passkey enrollment trusts the first person who opens the enrollment link. It goes to you by DM, works once and expires in a few minutes.
 
 ## Config
 
@@ -280,7 +291,7 @@ Changes to this file apply without a restart (see [Editing the config file](#edi
 ## Security notes
 
 - **Only listed members.** Anyone not in `users` is ignored, and only listed members can press the buttons. A Slack message is still an instruction to an agent with your access, so keep beckon's channels to people you trust.
-- **Secrets.** Passwords and one-time codes go through the [secret handoff](#passwords-and-one-time-codes-optional), never through Claude or Slack. Screen control refuses to type into password fields.
+- **Secrets.** Passwords and one-time codes go end to end from your phone to the field through the [secret handoff](#passwords-and-one-time-codes-optional), never through Claude or Slack. Screen control refuses to type into password fields.
 - **Approval guards.** The approval hook fails closed. If the beckon process is unreachable, the action is denied.
 - **What the rules match.** Always-asked rules match command text, which catches routine mistakes but is not a sandbox. Give the host's CLIs only the access you would give the agent, and protect `main` with branch protection as well.
 - **Tokens.** `~/.beckon/env` holds your Slack tokens. `beckon init` creates it with mode 600, and `beckon doctor` fixes the mode if it drifts.

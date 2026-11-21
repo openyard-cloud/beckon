@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { Progress } from './progress.mjs';
 import { TabTracker } from './tabs.mjs';
-import { validateRequest as validateSecretRequest } from './secrets.mjs';
+import { validateRequest as validateSecretRequest, NoPasskeyError } from './secrets.mjs';
 import { findName, checkRepo, addProject, removeProject, linkChannel, unlinkChannel, setDefault, readRaw, writeRaw } from './projects.mjs';
 import { slackToPlain, commandText, chunkMarkdown, oneLine, duration } from './text.mjs';
 import { matchRule, inputText } from './policy.mjs';
@@ -348,6 +348,7 @@ export class Beckon {
       '• `unlink` in a channel, or `unlink #channel`',
       '• `default <project>`: the project DMs go to',
       '• `remove project <name>`',
+      '• `passkey`: add a passkey for entering passwords and codes (sends you a link) · `passkeys` · `remove passkey <id>`',
       '',
       '*Projects*',
       projects,
@@ -455,12 +456,50 @@ export class Beckon {
       if (config) await reply(`${labels} is no longer linked to a project. Messages there need a \`project:\` prefix.`);
       return true;
     }
+    if ((verb === 'passkey' || verb === 'passkeys' || (verb === 'remove' && second === 'passkey')) && !channels.length) {
+      return this.passkeyCommand(verb, words, ev, reply);
+    }
     if (verb === 'default' && words.length === 2 && !channels.length) {
       const config = await this.editConfig(reply, (raw) => setDefault(raw, words[1]));
       if (config) await reply(`DMs now go to *${config.defaultProject}*.`);
       return true;
     }
     return false;
+  }
+
+  // passkey: DM a one-time link to add a passkey. passkeys: list them. remove passkey <id>.
+  async passkeyCommand(verb, words, ev, reply) {
+    if (!this.secrets) {
+      await reply('Secret handoff is not set up on this beckon (secretRelay in the config).');
+      return true;
+    }
+    if (verb === 'passkeys' && words.length === 1) {
+      const keys = this.secrets.passkeys.list();
+      await reply(keys.length
+        ? `*Passkeys*\n${keys.map((k) => `• \`${k.id.slice(0, 10)}\` ${escapeMrkdwn(k.name ?? '')}, added ${k.createdAt?.slice(0, 10) ?? '?'}`).join('\n')}\nRemove one with \`remove passkey <id>\`.`
+        : 'No passkeys yet. Send `passkey` to add one.');
+      return true;
+    }
+    if (verb === 'remove' && words.length === 3) {
+      const removed = words[2].length >= 6 ? this.secrets.passkeys.remove(words[2]) : 0;
+      await reply(removed ? `Removed ${removed} passkey${removed > 1 ? 's' : ''}.` : 'No passkey starts with that id (give at least 6 characters).');
+      return true;
+    }
+    if (verb !== 'passkey' || words.length !== 1) return false;
+    const profile = await this.slack.call('users.info', { user: ev.user }).catch(() => null);
+    const name = profile?.user?.real_name || profile?.user?.name || ev.user;
+    const enrollment = this.secrets.createEnrollment(`${name} (beckon)`);
+    const minutes = Math.round((enrollment.expiresAt - this.now()) / 60_000);
+    const dm = await this.post(ev.user, null, 'Add a passkey for beckon', [
+      section(`:key: Open this on your phone to add a passkey. beckon asks for it (Face ID or Touch ID) every time you enter a password or code. The link works once and expires in ${minutes} min.`),
+      { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Add passkey' }, url: enrollment.url, action_id: 'beckon_secret_open', style: 'primary' }] },
+    ]);
+    if (!String(ev.channel).startsWith('D')) await reply('I sent you a link in a DM.');
+    enrollment.done.then(async (result) => {
+      const text = result.status === 'enrolled' ? ':white_check_mark: Passkey added.' : `:no_entry_sign: Passkey not added: ${escapeMrkdwn(result.reason ?? result.status)}`;
+      await this.slack.call('chat.update', { channel: dm.channel ?? ev.user, ts: dm.ts, text, blocks: [section(text)] }).catch(() => {});
+    });
+    return true;
   }
 
   busy(project) {
@@ -850,7 +889,14 @@ export class Beckon {
     const { request, errors } = validateSecretRequest(payload);
     if (errors.length) return { status: 'invalid', reason: errors.join('; ') };
 
-    const handoff = this.secrets.create(request);
+    let handoff;
+    try {
+      handoff = this.secrets.create(request);
+    } catch (e) {
+      if (!(e instanceof NoPasskeyError)) throw e;
+      await this.post(t.channel, t.threadTs, 'Passkey needed', [section(`:key: Claude needs *${escapeMrkdwn(request.label)}*, but no passkey is registered with beckon yet. DM me \`passkey\` to add one, then reply here to continue.`)]);
+      return { status: 'unavailable', reason: 'no passkey is registered yet. Stop here and say the person needs to add one (DM beckon "passkey"), then reply to continue.' };
+    }
     const minutes = Math.round((handoff.expiresAt - this.now()) / 60_000);
     const where = `${escapeMrkdwn(request.app)}${request.domains.length ? ` · ${request.domains.map(escapeMrkdwn).join(', ')}` : ''}`;
     const kindText = { password: 'password', otp: 'one-time code', text: 'value' }[request.kind];
@@ -861,7 +907,7 @@ export class Beckon {
     for (const u of this.config.users) {
       try {
         const dm = await this.post(u, null, `Enter ${request.label} for beckon`, [
-          section(`:closed_lock_with_key: *${escapeMrkdwn(request.label)}*\nFor ${where}, into the focused ${kindText} field. The link opens on your tailnet devices only, works once and expires in ${minutes} min.${request.note ? `\n_${escapeMrkdwn(request.note)}_` : ''}`),
+          section(`:closed_lock_with_key: *${escapeMrkdwn(request.label)}*\nFor ${where}, into the focused ${kindText} field. Encrypted on your phone for beckon and confirmed with your passkey. The link works once and expires in ${minutes} min.${request.note ? `\n_${escapeMrkdwn(request.note)}_` : ''}`),
           { type: 'actions', elements: [
             { type: 'button', text: { type: 'plain_text', text: 'Enter securely' }, url: handoff.url, action_id: 'beckon_secret_open', style: 'primary' },
             button('Cancel', 'beckon_secret_cancel', handoff.id, 'danger'),

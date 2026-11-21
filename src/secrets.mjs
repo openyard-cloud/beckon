@@ -1,65 +1,24 @@
-import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { newKeyPair, decrypt, signedChallenge, verifyAssertion, verifyRegistration, newId as randomId } from './passkeys.mjs';
 import { spawn } from 'node:child_process';
 
 // Secret handoff. When Claude reaches a password or one-time-code field, it asks beckon instead
-// of typing anything itself. beckon posts a link in Slack to a one-time form, served from this
-// machine and reached over a private network (Tailscale Serve), never the public internet. The
-// person types the secret on their phone; beckon checks that the field Claude left focused is
-// still the one the form described (app, kind of field, site) and types the secret into it with
-// Peekaboo. The secret never reaches Claude, Slack, the logs or the clipboard: it is held as bytes,
-// passed to Peekaboo on stdin, and overwritten as soon as it is typed.
+// of typing anything itself. beckon publishes a one-time page on its relay (relay/worker.mjs, on
+// Cloudflare) and DMs the link. On the phone, the page encrypts the value to a key pair made here
+// for this request (the public half rides in the link's #fragment, which never reaches a server)
+// and signs the ciphertext with the person's passkey. Here, beckon checks the passkey, decrypts,
+// checks that the field Claude left focused is still the one described (app, kind of field, site)
+// and types the value with Peekaboo. The relay, Slack, Claude, the logs and the process list never
+// see it: it is held as bytes, passed on stdin and overwritten once typed.
 
 export const SECRET_KINDS = ['password', 'otp', 'text'];
 const MAX_SECRET_BYTES = 1024;
-const MAX_BODY_BYTES = 4096;
 const BROWSERS = new Set([
   'com.google.Chrome', 'com.google.Chrome.canary', 'com.apple.Safari', 'com.apple.SafariTechnologyPreview',
   'company.thebrowser.Browser', 'com.brave.Browser', 'com.microsoft.edgemac', 'org.mozilla.firefox',
   'com.operasoftware.Opera', 'com.vivaldi.Vivaldi',
 ]);
 
-// Decodes one field of an application/x-www-form-urlencoded body into bytes, so the secret is
-// never turned into a JavaScript string (which cannot be wiped).
-export function formField(body, name) {
-  const want = Buffer.from(`${name}=`);
-  let start = 0;
-  while (start <= body.length) {
-    let end = body.indexOf(0x26, start); // &
-    if (end === -1) end = body.length;
-    if (body.subarray(start, start + want.length).equals(want)) {
-      const raw = body.subarray(start + want.length, end);
-      const out = Buffer.alloc(raw.length);
-      let n = 0;
-      for (let i = 0; i < raw.length; i++) {
-        const c = raw[i];
-        if (c === 0x2b) {
-          out[n++] = 0x20; // + is a space
-        } else if (c === 0x25 && i + 2 < raw.length && isHex(raw[i + 1]) && isHex(raw[i + 2])) {
-          out[n++] = hexValue(raw[i + 1]) * 16 + hexValue(raw[i + 2]); // no strings made from the secret
-          i += 2;
-        } else {
-          out[n++] = c;
-        }
-      }
-      const value = Buffer.from(out.subarray(0, n));
-      out.fill(0);
-      return value;
-    }
-    start = end + 1;
-  }
-  return null;
-}
-
-function hexValue(c) {
-  if (c <= 0x39) return c - 0x30;
-  if (c <= 0x46) return c - 0x41 + 10;
-  return c - 0x61 + 10;
-}
-
-function isHex(c) {
-  return (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x46) || (c >= 0x61 && c <= 0x66);
-}
+export class NoPasskeyError extends Error {}
 
 export function hostMatches(url, domains) {
   let parsed;
@@ -121,82 +80,51 @@ export function validateRequest(input) {
   return { request: { label, kind, app, domains, note: typeof input?.note === 'string' ? input.note.slice(0, 200) : '' }, errors };
 }
 
-const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-function page(title, body) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtml(title)}</title>
-<style>
-:root{color-scheme:light dark;--bg:#f6efe0;--fg:#1c2530;--muted:#5b6470;--card:#fff;--accent:#ef9f2c;--line:#e2d8c4}
-@media (prefers-color-scheme:dark){:root{--bg:#14191f;--fg:#f1ece2;--muted:#a3abb5;--card:#1c2530;--line:#2c3642}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 -apple-system,system-ui,sans-serif;padding:24px 16px}
-main{max-width:420px;margin:0 auto;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px}
-h1{font-size:19px;margin:0 0 14px}dl{margin:0 0 18px;display:grid;grid-template-columns:auto 1fr;gap:6px 12px}dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
-input{width:100%;font:inherit;font-size:20px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);margin:4px 0 16px}
-.row{display:flex;gap:10px}button{flex:1;font:inherit;font-weight:600;padding:12px;border-radius:10px;border:0;cursor:pointer}
-.go{background:var(--accent);color:#1c2530}.stop{background:transparent;color:var(--muted);border:1px solid var(--line)}
-p{margin:0 0 10px}.muted{color:var(--muted);font-size:14px}
-</style></head><body><main>${body}</main></body></html>`;
-}
-
-export function formPage(entry) {
-  const r = entry.request;
-  const where = r.domains.length ? r.domains.join(', ') : '(not a web page)';
-  const field = r.kind === 'password' ? 'password field' : r.kind === 'otp' ? 'one-time code field' : 'text field';
-  const autocomplete = r.kind === 'otp' ? 'one-time-code' : r.kind === 'password' ? 'current-password' : 'off';
-  const inputmode = r.kind === 'otp' ? ' inputmode="numeric"' : '';
-  return page('beckon: enter a secret', `<h1>🔐 ${escapeHtml(r.label)}</h1>
-<dl><dt>App</dt><dd>${escapeHtml(r.app)}</dd><dt>Site</dt><dd>${escapeHtml(where)}</dd><dt>Into</dt><dd>the focused ${field}</dd>${r.note ? `<dt>Note</dt><dd>${escapeHtml(r.note)}</dd>` : ''}</dl>
-<form method="post" autocomplete="off">
-<input type="password" name="secret" autocomplete="${autocomplete}"${inputmode} maxlength="${MAX_SECRET_BYTES}" required autofocus aria-label="${escapeHtml(r.label)}">
-<div class="row"><button class="go" name="action" value="submit">Fill it in</button><button class="stop" name="action" value="cancel" formnovalidate>Cancel</button></div>
-</form>
-<p class="muted" style="margin-top:14px">beckon types this into the field on the Mac after checking it is still the field described above. Claude, Slack and the logs never see it. This link works once.</p>`);
-}
-
-export function resultPage(title, text) {
-  return page(title, `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(text)}</p><p class="muted">You can close this page.</p>`);
-}
-
-const SECURITY_HEADERS = {
-  'content-type': 'text/html; charset=utf-8',
-  'cache-control': 'no-store',
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-  'referrer-policy': 'no-referrer',
-  'x-content-type-options': 'nosniff',
-  'x-frame-options': 'DENY',
-  'cross-origin-opener-policy': 'same-origin',
-  'cross-origin-resource-policy': 'same-origin',
-  'permissions-policy': 'camera=(), microphone=(), geolocation=()',
-};
-
 export class SecretBroker {
-  constructor({
-    publicUrl,
-    ttlMs = 5 * 60_000,
-    readFocus,
-    typeSecret,
-    log = () => {},
-    now = () => Date.now(),
-    newId = () => randomBytes(32).toString('base64url'),
-  }) {
-    const url = new URL(publicUrl);
-    if (url.protocol !== 'https:') throw new Error('secretForm.publicUrl must be https (Tailscale Serve gives one)');
+  constructor({ relayUrl, relay, passkeys, ttlMs = 5 * 60_000, readFocus, typeSecret, log = () => {}, now = () => Date.now(), newId = randomId }) {
+    const url = new URL(relayUrl);
+    if (url.protocol !== 'https:') throw new Error('secretRelay.url must be https');
     this.origin = url.origin;
-    this.host = url.host;
-    Object.assign(this, { ttlMs, readFocus, typeSecret, log, now, newId });
+    this.rpId = url.hostname;
+    Object.assign(this, { relay, passkeys, ttlMs, readFocus, typeSecret, log, now, newId });
     this.pending = new Map();
+    relay.handlers.submit = (id, body) => this.onSubmit(id, body);
+    relay.handlers.enrolled = (id, body) => this.onEnrolled(id, body);
   }
 
-  // Opens a request. `done` settles with { status: filled | refused | cancelled | expired | failed, reason }.
-  create(request) {
+  open(kind, extra, meta) {
     const id = this.newId();
     let settle;
     const done = new Promise((r) => { settle = r; });
-    const entry = { id, request, expiresAt: this.now() + this.ttlMs, settle, busy: false };
-    entry.timer = setTimeout(() => this.finish(id, { status: 'expired', reason: 'nobody filled the form in time' }), this.ttlMs);
+    const expiresAt = this.now() + this.ttlMs;
+    const entry = { id, kind, expiresAt, settle, ...extra };
+    entry.timer = setTimeout(() => this.finish(id, { status: 'expired', reason: 'nobody answered in time' }), this.ttlMs);
     entry.timer.unref?.();
     this.pending.set(id, entry);
-    return { id, url: `${this.origin}/s/${id}`, expiresAt: entry.expiresAt, done };
+    this.relay.open(id, kind, { ...meta, mode: kind, id }, expiresAt);
+    return { entry, done };
+  }
+
+  // A secret request. `done` settles with { status: filled | refused | cancelled | expired | failed, reason }.
+  create(request) {
+    const credentials = this.passkeys.list().map((k) => k.id);
+    if (!credentials.length) throw new NoPasskeyError('no passkey is registered with this beckon yet');
+    const keys = newKeyPair();
+    const challenge = this.newId();
+    const { entry, done } = this.open('secret', { request, ecdh: keys.ecdh, challenge }, {
+      label: request.label, app: request.app, domains: request.domains, inputKind: request.kind, note: request.note, challenge, credentials,
+    });
+    return { id: entry.id, url: `${this.origin}/s/${entry.id}#k=${keys.publicKey}`, expiresAt: entry.expiresAt, done };
+  }
+
+  // A passkey enrollment for one person. `done` settles with { status: enrolled | ... }.
+  createEnrollment(userName) {
+    const challenge = this.newId();
+    const userId = this.newId();
+    const { entry, done } = this.open('enroll', { challenge, userName }, {
+      challenge, userId, userName, credentials: this.passkeys.list().map((k) => k.id),
+    });
+    return { id: entry.id, url: `${this.origin}/e/${entry.id}`, expiresAt: entry.expiresAt, done };
   }
 
   cancel(id, reason = 'cancelled in Slack') {
@@ -207,122 +135,92 @@ export class SecretBroker {
     for (const id of [...this.pending.keys()]) this.finish(id, { status: 'cancelled', reason });
   }
 
+  take(id, kind) {
+    const entry = this.pending.get(id);
+    if (!entry || entry.kind !== kind) return null;
+    this.pending.delete(id);
+    clearTimeout(entry.timer);
+    this.relay.close(id);
+    if (this.now() > entry.expiresAt) {
+      entry.settle({ status: 'expired', reason: 'the link expired' });
+      return null;
+    }
+    return entry;
+  }
+
   finish(id, result) {
     const entry = this.pending.get(id);
     if (!entry) return false;
     this.pending.delete(id);
     clearTimeout(entry.timer);
+    entry.ecdh = null;
+    this.relay.close(id);
     entry.settle(result);
     return true;
   }
 
-  // The HTTP handler behind Tailscale Serve. Bound to loopback by start().
-  async handle(req, res) {
-    const send = (status, html) => {
-      res.writeHead(status, SECURITY_HEADERS);
-      res.end(html);
-    };
-    // Requests must arrive for the published name: this rejects DNS rebinding and stray callers.
-    if (req.headers.host !== this.host) return send(421, resultPage('Wrong address', 'Open the link from Slack.'));
-    const match = /^\/s\/([A-Za-z0-9_-]{20,64})$/.exec(req.url ?? '');
-    const entry = match && this.pending.get(match[1]);
-    if (!entry || this.now() > entry.expiresAt) {
-      if (entry) this.finish(entry.id, { status: 'expired', reason: 'the link expired' });
-      return send(410, resultPage('Link no longer valid', 'This link was used, cancelled or has expired. Ask again from Slack if you still need it.'));
+  async onSubmit(id, body) {
+    const entry = this.take(id, 'secret');
+    if (!entry) return { status: 'expired', reason: 'this request is no longer open' };
+    if (body.cancel === true) {
+      entry.settle({ status: 'cancelled', reason: 'cancelled on the form' });
+      return { status: 'cancelled' };
     }
-    if (req.method === 'GET') return send(200, formPage(entry));
-    if (req.method !== 'POST') return send(405, resultPage('Not allowed', 'Use the form.'));
-    const origin = req.headers.origin;
-    if (origin && origin !== this.origin) return send(403, resultPage('Not allowed', 'The form must be sent from its own page.'));
-    if (entry.busy) return send(409, resultPage('Already in progress', 'This request is being handled.'));
-    entry.busy = true;
-
-    let body;
-    try {
-      body = await readBody(req, MAX_BODY_BYTES);
-    } catch {
-      entry.busy = false;
-      return send(413, resultPage('Too long', 'That is longer than any password should be.'));
-    }
-    const action = formField(body, 'action')?.toString('utf8') ?? 'submit';
-    const secret = formField(body, 'secret');
-    body.fill(0);
-
-    if (action === 'cancel') {
-      secret?.fill(0);
-      this.finish(entry.id, { status: 'cancelled', reason: 'cancelled on the form' });
-      return send(200, resultPage('Cancelled', 'Nothing was typed. Claude is told the request was cancelled.'));
-    }
-    if (!secret || secret.length === 0 || secret.length > MAX_SECRET_BYTES) {
-      secret?.fill(0);
-      entry.busy = false;
-      return send(400, resultPage('Nothing entered', 'Go back and enter the value.'));
-    }
-
-    // Single use from here on: the entry is gone whatever happens next.
-    this.pending.delete(entry.id);
-    clearTimeout(entry.timer);
+    let plain = null;
     let result;
     try {
-      const reason = checkTarget(await this.readFocus(entry.request.app), entry.request);
-      if (reason) {
-        result = { status: 'refused', reason };
-      } else {
-        await this.typeSecret({ app: entry.request.app, secret });
+      verifyAssertion(body.passkey, {
+        stored: this.passkeys.list(),
+        challenge: signedChallenge(entry.challenge, body),
+        origin: this.origin,
+        rpId: this.rpId,
+      });
+    } catch (e) {
+      result = { status: 'refused', reason: e.message };
+    }
+    if (!result) {
+      try {
+        plain = decrypt({ ecdh: entry.ecdh, id, epk: body.epk, iv: body.iv, ct: body.ct });
+      } catch {
+        result = { status: 'refused', reason: 'the value could not be decrypted' };
+      }
+    }
+    entry.ecdh = null;
+    try {
+      if (!result && (plain.length === 0 || plain.length > MAX_SECRET_BYTES)) result = { status: 'refused', reason: 'the value is empty or too long' };
+      if (!result) {
+        const reason = checkTarget(await this.readFocus(entry.request.app), entry.request);
+        if (reason) result = { status: 'refused', reason };
+      }
+      if (!result) {
+        await this.typeSecret({ app: entry.request.app, secret: plain });
         result = { status: 'filled' };
       }
     } catch (e) {
       result = { status: 'failed', reason: e.message };
     } finally {
-      secret.fill(0);
+      plain?.fill(0);
     }
-    entry.settle(result);
     this.log(`Secret "${entry.request.label}": ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
-    if (result.status === 'filled') return send(200, resultPage('Filled in', `beckon typed it into ${entry.request.app}. You can close this page.`));
-    return send(200, resultPage('Not filled', `Nothing was typed: ${result.reason}. Claude is told, and can ask again once the right field is focused.`));
+    entry.settle(result);
+    return result;
   }
-}
 
-function readBody(req, limit) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    req.on('data', (c) => {
-      size += c.length;
-      if (size > limit) {
-        chunks.forEach((x) => x.fill(0));
-        req.destroy();
-        reject(new Error('too large'));
-      } else {
-        chunks.push(c);
-      }
-    });
-    req.on('end', () => {
-      const body = Buffer.concat(chunks);
-      chunks.forEach((x) => x.fill(0));
-      resolve(body);
-    });
-    req.on('error', reject);
-  });
-}
-
-export async function startSecretServer(broker, { port, host = '127.0.0.1' }) {
-  const server = createServer((req, res) => {
-    broker.handle(req, res).catch(() => {
-      if (!res.headersSent) res.writeHead(500, SECURITY_HEADERS);
-      res.end();
-    });
-  });
-  server.headersTimeout = 10_000;
-  server.requestTimeout = 30_000;
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, resolve);
-  });
-  return {
-    port: server.address().port,
-    close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(() => r()); }),
-  };
+  async onEnrolled(id, body) {
+    const entry = this.take(id, 'enroll');
+    if (!entry) return { status: 'expired', reason: 'this enrollment is no longer open' };
+    let result;
+    try {
+      const passkey = verifyRegistration(body, { challenge: entry.challenge, origin: this.origin });
+      this.passkeys.add({ ...passkey, name: entry.userName, createdAt: new Date(this.now()).toISOString() });
+      result = { status: 'enrolled' };
+    } catch (e) {
+      result = { status: 'refused', reason: e.message };
+    }
+    this.log(`Passkey enrollment for ${entry.userName}: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+    entry.settle(result);
+    return result;
+  }
 }
 
 // The real focus reader and typist: the beckon-ax helper and Peekaboo's type --secret-stdin.

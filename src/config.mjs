@@ -172,33 +172,30 @@ export function validateConfig(raw) {
     shutdownGraceMinutes: num('shutdownGraceMinutes', 30, 0, 240),
     claudePath: typeof raw.claudePath === 'string' ? expandHome(raw.claudePath) : 'claude',
     allowApiKey: raw.allowApiKey === true,
-    secretForm: secretFormConfig(raw.secretForm, errors),
+    secretRelay: secretRelayConfig(raw.secretRelay, errors),
   };
   return { config, errors };
 }
 
-// Secret handoff (src/secrets.mjs): a one-time form served on loopback and published to your
-// devices with Tailscale Serve. Off unless configured.
-function secretFormConfig(raw, errors) {
+// Secret handoff (src/secrets.mjs) through your own relay on Cloudflare (relay/). Off unless
+// configured. The relay token is BECKON_RELAY_TOKEN in ~/.beckon/env.
+function secretRelayConfig(raw, errors) {
   if (raw === undefined || raw === null) return null;
   if (typeof raw !== 'object') {
-    errors.push('secretForm: an object like { "publicUrl": "https://my-mac.tailnet.ts.net" }');
+    errors.push('secretRelay: an object like { "url": "https://beckon-relay.you.workers.dev" }');
     return null;
   }
   let url = null;
   try {
-    url = new URL(raw.publicUrl);
+    url = new URL(raw.url);
   } catch {
-    errors.push('secretForm.publicUrl: the https address Tailscale Serve gives this machine');
+    errors.push('secretRelay.url: the https address of your deployed relay (relay/)');
   }
-  if (url && url.protocol !== 'https:') errors.push('secretForm.publicUrl: must be https');
-  const port = raw.port ?? 8788;
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) errors.push('secretForm.port: a port number from 1024 to 65535');
+  if (url && url.protocol !== 'https:') errors.push('secretRelay.url: must be https');
   const ttl = raw.ttlMinutes ?? 5;
-  if (typeof ttl !== 'number' || ttl < 1 || ttl > 30) errors.push('secretForm.ttlMinutes: 1 to 30');
+  if (typeof ttl !== 'number' || ttl < 1 || ttl > 30) errors.push('secretRelay.ttlMinutes: 1 to 30');
   return {
-    publicUrl: url ? url.origin : null,
-    port,
+    url: url ? url.origin : null,
     ttlMinutes: ttl,
     peekabooPath: expandHome(raw.peekabooPath ?? '~/.beckon/bin/peekaboo'),
     axHelperPath: expandHome(raw.axHelperPath ?? '~/.beckon/bin/beckon-ax'),

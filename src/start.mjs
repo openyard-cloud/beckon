@@ -2,7 +2,10 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, watch, existsSync } from 'node:fs';
 import { dirname, basename } from 'node:path';
-import { SecretBroker, startSecretServer, runJson, peekabooTypist } from './secrets.mjs';
+import { SecretBroker, runJson, peekabooTypist } from './secrets.mjs';
+import { RelayClient } from './relay.mjs';
+import { PasskeyStore } from './passkeys.mjs';
+import { join } from 'node:path';
 import { beckonHome, homePaths, loadEnvFile, loadConfig, validateConfig } from './config.mjs';
 import { SlackApi, SocketClient } from './slack.mjs';
 import { StateStore } from './state.mjs';
@@ -26,7 +29,7 @@ export async function start(env = process.env) {
     spawn('/usr/bin/caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref();
   }
 
-  const secretSetup = await startSecrets(config.secretForm);
+  const secretSetup = startSecrets(config.secretRelay, env, paths.home);
 
   const slack = new SlackApi(botToken);
   const state = new StateStore(paths.state);
@@ -69,7 +72,7 @@ export async function start(env = process.env) {
     log(`Got ${signal}, finishing running tasks before stopping`);
     await beckon.shutdownGracefully(beckon.config.shutdownGraceMinutes * 60_000);
     secretSetup?.broker.cancelAll('beckon is shutting down');
-    await secretSetup?.server.close();
+    secretSetup?.relay.stop();
     socket.stop();
     await hook.close();
     process.exit(0);
@@ -117,36 +120,40 @@ export function watchConfig(file, beckon, { debounceMs = 500 } = {}) {
   return watcher;
 }
 
-// The secret handoff form. Needs the beckon-ax helper (compiled from helpers/ax-focus.swift on
-// first use) and the openyard Peekaboo build with `type --secret-stdin`.
-async function startSecrets(form) {
-  if (!form) return null;
-  if (!existsSync(form.axHelperPath)) {
+// The secret handoff. Needs the relay (relay/, deployed to Cloudflare) and its token, the
+// beckon-ax helper (compiled from helpers/ax-focus.swift on first use) and the openyard Peekaboo
+// build with `type --secret-stdin`.
+function startSecrets(settings, env, home) {
+  if (!settings) return null;
+  const token = env.BECKON_RELAY_TOKEN;
+  if (!token || token.length < 32) {
+    log('Secret handoff is off: BECKON_RELAY_TOKEN is missing from ~/.beckon/env');
+    return null;
+  }
+  if (!existsSync(settings.axHelperPath)) {
     const source = fileURLToPath(new URL('../helpers/ax-focus.swift', import.meta.url));
-    mkdirSync(dirname(form.axHelperPath), { recursive: true });
-    const built = spawnSync('swiftc', ['-O', '-o', form.axHelperPath, source], { encoding: 'utf8' });
+    mkdirSync(dirname(settings.axHelperPath), { recursive: true });
+    const built = spawnSync('swiftc', ['-O', '-o', settings.axHelperPath, source], { encoding: 'utf8' });
     if (built.status !== 0) {
-      log(`Secret handoff is off: could not build ${form.axHelperPath} (${(built.stderr || built.error?.message || '').trim().split('\n').pop()})`);
+      log(`Secret handoff is off: could not build ${settings.axHelperPath} (${(built.stderr || built.error?.message || '').trim().split('\n').pop()})`);
       return null;
     }
   }
-  if (!existsSync(form.peekabooPath)) {
-    log(`Secret handoff is off: ${form.peekabooPath} is missing (build openyard-cloud/Peekaboo)`);
+  if (!existsSync(settings.peekabooPath)) {
+    log(`Secret handoff is off: ${settings.peekabooPath} is missing (build openyard-cloud/Peekaboo)`);
     return null;
   }
+  const relay = new RelayClient({ url: settings.url, token, log });
   const broker = new SecretBroker({
-    publicUrl: form.publicUrl,
-    ttlMs: form.ttlMinutes * 60_000,
-    readFocus: (app) => runJson(form.axHelperPath, [app]),
-    typeSecret: peekabooTypist(form.peekabooPath),
+    relayUrl: settings.url,
+    relay,
+    passkeys: new PasskeyStore(join(home, 'passkeys.json')),
+    ttlMs: settings.ttlMinutes * 60_000,
+    readFocus: (app) => runJson(settings.axHelperPath, [app]),
+    typeSecret: peekabooTypist(settings.peekabooPath),
     log,
   });
-  try {
-    const server = await startSecretServer(broker, { port: form.port });
-    log(`Secret handoff form on 127.0.0.1:${server.port}, published as ${form.publicUrl}`);
-    return { broker, server };
-  } catch (e) {
-    log(`Secret handoff is off: could not listen on 127.0.0.1:${form.port} (${e.message})`);
-    return null;
-  }
+  relay.once('ready', () => log(`Connected to the secret relay ${settings.url}`));
+  relay.start();
+  return { broker, relay };
 }

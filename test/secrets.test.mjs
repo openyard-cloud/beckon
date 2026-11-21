@@ -1,32 +1,52 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { request } from 'node:http';
-import { formField, hostMatches, checkTarget, validateRequest, SecretBroker, startSecretServer } from '../src/secrets.mjs';
+import { join } from 'node:path';
+import { hostMatches, checkTarget, validateRequest, SecretBroker, NoPasskeyError } from '../src/secrets.mjs';
+import { PasskeyStore } from '../src/passkeys.mjs';
+import { makeAuthenticator, registration, submission } from './phone.mjs';
+import { tempDir } from './helpers.mjs';
 
-const HOST = 'mac.tail1234.ts.net';
-
-function http(port, path, { method = 'GET', body, headers = {} } = {}) {
-  return new Promise((resolve, reject) => {
-    const req = request({ host: '127.0.0.1', port, path, method, headers: { host: HOST, ...headers } }, (res) => {
-      let text = '';
-      res.on('data', (c) => { text += c; });
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text }));
-    });
-    req.on('error', reject);
-    req.end(body);
-  });
-}
-
+const RELAY = 'https://beckon-relay.example.workers.dev';
 const focus = (extra = {}) => ({ app: 'Google Chrome', bundleId: 'com.google.Chrome', role: 'AXTextField', subrole: 'AXSecureTextField', url: 'https://appleid.apple.com/sign-in', ...extra });
 const req = (extra = {}) => validateRequest({ label: 'Apple ID password', kind: 'password', app: 'Google Chrome', domains: ['apple.com'], ...extra }).request;
 
-test('form fields decode to bytes', () => {
-  const body = Buffer.from('action=submit&secret=p%40ss+w%C3%B6rd%26%3D');
-  assert.equal(formField(body, 'secret').toString('utf8'), 'p@ss wörd&=');
-  assert.equal(formField(body, 'action').toString(), 'submit');
-  assert.equal(formField(body, 'missing'), null);
-  assert.equal(formField(Buffer.from('secret=%4'), 'secret').toString(), '%4');
-});
+class FakeRelay {
+  constructor() {
+    this.records = new Map();
+    this.closed = [];
+    this.handlers = {};
+  }
+  open(id, kind, meta, expiresAt) { this.records.set(id, { kind, meta, expiresAt }); }
+  close(id) { this.closed.push(id); this.records.delete(id); }
+}
+
+function setup(options = {}) {
+  const relay = new FakeRelay();
+  const passkeys = new PasskeyStore(join(tempDir(), 'passkeys.json'));
+  const typed = [];
+  const logs = [];
+  const broker = new SecretBroker({
+    relayUrl: RELAY,
+    relay,
+    passkeys,
+    readFocus: async () => focus(),
+    typeSecret: async ({ secret }) => { typed.push(Buffer.from(secret).toString()); },
+    log: (m) => logs.push(m),
+    ...options,
+  });
+  return { relay, passkeys, broker, typed, logs };
+}
+
+async function enroll(broker, relay) {
+  const auth = makeAuthenticator();
+  const e = broker.createEnrollment('Thi (beckon)');
+  const meta = relay.records.get(e.id).meta;
+  assert.equal(meta.mode, 'enroll');
+  const result = await relay.handlers.enrolled(e.id, registration(auth, { challenge: meta.challenge, origin: RELAY }));
+  assert.deepEqual(result, { status: 'enrolled' });
+  assert.equal((await e.done).status, 'enrolled');
+  return auth;
+}
 
 test('domains match whole labels over https only', () => {
   assert.ok(hostMatches('https://appleid.apple.com/x', ['apple.com']));
@@ -55,74 +75,76 @@ test('requests are validated', () => {
   assert.equal(validateRequest({ label: '', kind: 'pin', app: '', domain: 'not a domain' }).errors.length, 4);
 });
 
-async function broker(options = {}) {
-  const typed = [];
-  const logs = [];
-  const b = new SecretBroker({
-    publicUrl: `https://${HOST}`,
-    readFocus: async () => focus(),
-    typeSecret: async ({ secret }) => { typed.push(Buffer.from(secret)); },
-    log: (m) => logs.push(m),
-    ...options,
-  });
-  const server = await startSecretServer(b, { port: 0 });
-  return { b, server, typed, logs };
-}
-
-test('the form fills the field once and keeps the secret out of logs', async () => {
-  const { b, server, typed, logs } = await broker();
-  const h = b.create(req());
-  const path = new URL(h.url).pathname;
-  assert.equal(h.url.startsWith(`https://${HOST}/s/`), true);
-
-  const wrongHost = await http(server.port, path, { headers: { host: 'evil.example' } });
-  assert.equal(wrongHost.status, 421);
-
-  const form = await http(server.port, path);
-  assert.equal(form.status, 200);
-  assert.match(form.text, /Apple ID password/);
-  assert.match(form.text, /type="password"/);
-  assert.match(form.headers['content-security-policy'], /default-src 'none'/);
-  assert.equal(form.headers['cache-control'], 'no-store');
-  assert.ok(!/<script/i.test(form.text), 'the form has no scripts');
-
-  const foreign = await http(server.port, path, { method: 'POST', body: 'secret=x', headers: { origin: 'https://evil.example', 'content-type': 'application/x-www-form-urlencoded' } });
-  assert.equal(foreign.status, 403);
-
-  const sent = await http(server.port, path, { method: 'POST', body: 'action=submit&secret=hunter2%21', headers: { origin: `https://${HOST}`, 'content-type': 'application/x-www-form-urlencoded' } });
-  assert.equal(sent.status, 200);
-  assert.match(sent.text, /Filled in/);
-  assert.deepEqual(await h.done, { status: 'filled' });
-  assert.equal(typed[0].toString(), 'hunter2!');
-  assert.ok(!logs.join('\n').includes('hunter2'), 'never logged');
-
-  const again = await http(server.port, path);
-  assert.equal(again.status, 410, 'one use only');
-  await server.close();
+test('no secret request before a passkey is registered', () => {
+  const { broker } = setup();
+  assert.throws(() => broker.create(req()), NoPasskeyError);
 });
 
-test('a moved focus refuses and types nothing; cancel and expiry settle the request', async () => {
-  const { b, server, typed } = await broker({ readFocus: async () => focus({ url: 'https://phish.example/apple' }) });
-  const h = b.create(req());
-  const path = new URL(h.url).pathname;
-  const sent = await http(server.port, path, { method: 'POST', body: 'secret=hunter2', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
-  assert.match(sent.text, /Nothing was typed/);
-  assert.equal((await h.done).status, 'refused');
+test('an encrypted, passkey-signed value is typed once and never logged', async () => {
+  const { broker, relay, typed, logs } = setup();
+  const auth = await enroll(broker, relay);
+  const h = broker.create(req());
+  assert.match(h.url, /^https:\/\/beckon-relay\.example\.workers\.dev\/s\/[A-Za-z0-9_-]{43}#k=/);
+  const meta = relay.records.get(h.id).meta;
+  assert.deepEqual(meta.credentials, [auth.id]);
+  assert.ok(!JSON.stringify(meta).includes(new URL(h.url).hash.slice(3)), 'the relay never gets the key');
+
+  const body = await submission({ url: h.url, meta, secret: 'hunter2! đ', authenticator: auth });
+  assert.ok(!JSON.stringify(body).includes('hunter2'), 'the relay only sees ciphertext');
+  assert.deepEqual(await relay.handlers.submit(h.id, body), { status: 'filled' });
+  assert.deepEqual(await h.done, { status: 'filled' });
+  assert.deepEqual(typed, ['hunter2! đ']);
+  assert.ok(!logs.join('\n').includes('hunter2'));
+  assert.ok(relay.closed.includes(h.id));
+  assert.equal((await relay.handlers.submit(h.id, body)).status, 'expired', 'one use only');
+});
+
+test('wrong passkeys, tampering, replays elsewhere and a moved focus type nothing', async () => {
+  const { broker, relay, typed } = setup();
+  const auth = await enroll(broker, relay);
+  const cases = [
+    ['an unknown passkey', async (h, meta) => submission({ url: h.url, meta, secret: 'x', authenticator: makeAuthenticator() }), /not registered/],
+    ['no user verification', async (h, meta) => submission({ url: h.url, meta, secret: 'x', authenticator: auth, flags: 0x01 }), /did not verify the person/],
+    ['another origin', async (h, meta) => submission({ url: h.url, meta, secret: 'x', authenticator: auth, origin: 'https://evil.example' }), /used on https:\/\/evil\.example/],
+    ['another rp', async (h, meta) => submission({ url: h.url, meta, secret: 'x', authenticator: auth, rpId: 'evil.example' }), /belongs to another site/],
+    ['a swapped ciphertext', async (h, meta) => {
+      const good = await submission({ url: h.url, meta, secret: 'x', authenticator: auth });
+      const other = await submission({ url: h.url, meta, secret: 'attacker value', authenticator: makeAuthenticator() });
+      return { ...good, ct: other.ct, iv: other.iv, epk: other.epk };
+    }, /signed something else/],
+  ];
+  for (const [name, build, reason] of cases) {
+    const h = broker.create(req());
+    const result = await relay.handlers.submit(h.id, await build(h, relay.records.get(h.id).meta));
+    assert.equal(result.status, 'refused', name);
+    assert.match(result.reason, reason, name);
+  }
   assert.equal(typed.length, 0);
 
-  const c = b.create(req());
-  await http(server.port, new URL(c.url).pathname, { method: 'POST', body: 'action=cancel' });
-  assert.equal((await c.done).status, 'cancelled');
-
-  const s = b.create(req());
-  assert.ok(b.cancel(s.id));
-  assert.equal((await s.done).status, 'cancelled');
-  await server.close();
-
-  const short = new SecretBroker({ publicUrl: `https://${HOST}`, ttlMs: 30, readFocus: async () => focus(), typeSecret: async () => {} });
-  assert.equal((await short.create(req()).done).status, 'expired');
+  const moved = setup({ readFocus: async () => focus({ url: 'https://phish.example/apple' }) });
+  const auth2 = await enroll(moved.broker, moved.relay);
+  const h = moved.broker.create(req());
+  const r = await moved.relay.handlers.submit(h.id, await submission({ url: h.url, meta: moved.relay.records.get(h.id).meta, secret: 'x', authenticator: auth2 }));
+  assert.match(r.reason, /on phish\.example/);
+  assert.equal(moved.typed.length, 0);
 });
 
-test('only https public addresses are accepted', () => {
-  assert.throws(() => new SecretBroker({ publicUrl: 'http://mac.local' }), /https/);
+test('cancel and expiry settle requests; enrollment checks its challenge', async () => {
+  const { broker, relay } = setup({ ttlMs: 40 });
+  await enroll(broker, relay);
+  const c = broker.create(req());
+  assert.equal((await relay.handlers.submit(c.id, { cancel: true })).status, 'cancelled');
+  assert.equal((await c.done).status, 'cancelled');
+  const s = broker.create(req());
+  assert.ok(broker.cancel(s.id));
+  assert.equal((await s.done).status, 'cancelled');
+  assert.equal((await broker.create(req()).done).status, 'expired');
+
+  const e = broker.createEnrollment('x');
+  const bad = await relay.handlers.enrolled(e.id, registration(makeAuthenticator(), { challenge: 'not-the-challenge', origin: RELAY }));
+  assert.equal(bad.status, 'refused');
+});
+
+test('only https relays are accepted', () => {
+  assert.throws(() => new SecretBroker({ relayUrl: 'http://relay.local', relay: new FakeRelay() }), /https/);
 });
