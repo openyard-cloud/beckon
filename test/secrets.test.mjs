@@ -138,7 +138,10 @@ test('cancel and expiry settle requests; enrollment checks its challenge', async
   const s = broker.create(req());
   assert.ok(broker.cancel(s.id));
   assert.equal((await s.done).status, 'cancelled');
+  // The expiry timer is unref'd (the daemon has other handles); hold the loop open meanwhile.
+  const hold = setTimeout(() => {}, 5000);
   assert.equal((await broker.create(req()).done).status, 'expired');
+  clearTimeout(hold);
 
   const e = broker.createEnrollment('x');
   const bad = await relay.handlers.enrolled(e.id, registration(makeAuthenticator(), { challenge: 'not-the-challenge', origin: RELAY }));
