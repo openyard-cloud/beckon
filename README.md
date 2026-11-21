@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.svg" width="128" alt="beckon logo: a lowercase b whose bowl is a chat bubble holding a terminal prompt"></p>
+
 # beckon
 
 Run Claude Code from Slack, on your own machine, with your own Claude subscription.
