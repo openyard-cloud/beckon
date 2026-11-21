@@ -1,0 +1,35 @@
+{
+  "name": "beckon",
+  "version": "0.1.0",
+  "description": "Run Claude Code from Slack on your own machine and subscription: one thread per task, risky commands wait for your approval button.",
+  "type": "module",
+  "bin": {
+    "beckon": "bin/beckon.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "slack-app-manifest.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": [
+    "claude-code",
+    "slack",
+    "slack-bot",
+    "coding-agent",
+    "self-hosted",
+    "approvals"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openyard-cloud/beckon.git"
+  }
+}
