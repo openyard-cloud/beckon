@@ -83,6 +83,19 @@ export const DEFAULT_RULES = [
     tool: String.raw`^mcp__.*peekaboo.*__(click|action)$`,
     match: String.raw`"confirm"\s*:`,
   },
+  {
+    // Peekaboo's own agent clicks step by step inside one call, out of beckon's sight.
+    label: "Peekaboo's own agent (it acts without per-step approval)",
+    tool: String.raw`^mcp__.*peekaboo.*__agent$`,
+    match: null,
+  },
+  {
+    // Browser actions that can submit or confirm something. The guard does not see inside web
+    // pages, so these ask every time; reading, navigating and filling fields do not.
+    label: 'a browser action that can submit',
+    tool: String.raw`^mcp__.*peekaboo.*__browser$`,
+    match: String.raw`"action"\s*:\s*"(click|dom_click|press_key|upload_file|handle_dialog|call)"`,
+  },
 ];
 
 function compile(rules) {

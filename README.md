@@ -108,6 +108,8 @@ Some work has no command line: a dialog in Xcode, a form in a web console. becko
 - A click on a button whose label names a consequential step (Submit, Upload, Distribute, Release, Delete, ...) is refused until Claude repeats it with `confirm` set to that label. beckon turns the repeat into an **Allow / Deny** message in Slack that shows the label.
 - Typing into password fields is refused. Sign-ins stay with you.
 - Other clicks, typing and screenshots run without asking.
+- In Chrome (Peekaboo's `browser` tool), the guard cannot read the page, so actions that can submit (click, key presses, uploads, dialogs, raw DevTools calls) ask every time. Navigating, reading and filling fields do not.
+- Peekaboo's own `agent` tool, which acts step by step out of beckon's sight, always asks.
 
 Set it up once on the beckon machine:
 

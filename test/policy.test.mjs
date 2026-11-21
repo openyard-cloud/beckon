@@ -55,6 +55,12 @@ test('asks before connector actions that change something', () => {
   assert.equal(matchRule('mcp__peekaboo__click', { confirm: 'Submit for Review', on: 'B12' })?.label, 'click a consequential button on screen');
   assert.equal(matchRule('mcp__peekaboo__action', { on: 'B3', action: 'AXPress', confirm: 'Upload' })?.label, 'click a consequential button on screen');
   assert.equal(matchRule('mcp__peekaboo__click', { on: 'B12' }), null, 'clicks the guard lets through run without asking');
+  assert.ok(matchRule('mcp__peekaboo__agent', { task: 'release the app' }));
+  assert.equal(matchRule('mcp__peekaboo__browser', { action: 'click', uid: '1_5' })?.label, 'a browser action that can submit');
+  assert.ok(matchRule('mcp__peekaboo__browser', { action: 'call', mcp_tool: 'evaluate_script' }));
+  for (const action of ['navigate', 'snapshot', 'fill', 'screenshot', 'list_pages']) {
+    assert.equal(matchRule('mcp__peekaboo__browser', { action }), null, action);
+  }
   assert.equal(matchRule('mcp__claude_ai_Gmail__search_threads', {}), null);
   assert.equal(matchRule('mcp__supabase__list_tables', {}), null);
   assert.equal(matchRule('Read', { file_path: '/etc/passwd' }), null);
