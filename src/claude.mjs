@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
-// Settings passed with --settings: the two hooks that route tool use through beckon. They add
+// Settings passed with --settings: the hooks that route tool use through beckon, plus a Stop
+// hook that keeps the run going until it has closed the browser tabs it opened. They add
 // to the user's and the repository's own settings rather than replacing them.
 export function hookSettings({ nodePath, hookScript, timeoutSeconds }) {
   const q = (s) => `"${String(s).replace(/(["\\$`])/g, '\\$1')}"`;
@@ -9,6 +10,7 @@ export function hookSettings({ nodePath, hookScript, timeoutSeconds }) {
     hooks: {
       PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: command('pre'), timeout: timeoutSeconds }] }],
       PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command: command('permission'), timeout: timeoutSeconds }] }],
+      Stop: [{ hooks: [{ type: 'command', command: command('stop'), timeout: 30 }] }],
     },
   };
 }

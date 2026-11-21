@@ -143,6 +143,23 @@ test('a risky command waits for the button and runs after Allow', async () => {
   await close();
 });
 
+test('a run that leaves its browser tabs open is sent back to close them', async () => {
+  const { beckon, slack, done, close } = await setup();
+  await beckon.handleEvent(mention('TABS'));
+  await done();
+  const reply = slack.texts().find((t) => t?.startsWith('reminded'));
+  assert.match(reply, /^reminded 1: .*tabId 111/);
+
+  await beckon.handleEvent(mention('TABS STUBBORN'));
+  await done();
+  assert.ok(slack.texts().some((t) => t?.startsWith('reminded 2:')), 'gives up after two reminders');
+
+  await beckon.handleEvent(mention('hello'));
+  await done();
+  assert.ok(slack.texts().some((t) => t === 'echo: hello'), 'runs without tabs are not held up');
+  await close();
+});
+
 test('Deny tells claude not to work around it', async () => {
   const { beckon, slack, done, close } = await setup();
   await beckon.handleEvent(mention('RUN:git push origin main'));

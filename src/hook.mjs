@@ -23,6 +23,10 @@ export function hookOutput(kind, answer) {
     if (behavior === 'deny') out.message = message;
     return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: out } });
   }
+  if (kind === 'stop') {
+    if (decision !== 'block') return '';
+    return JSON.stringify({ decision: 'block', reason: answer.message });
+  }
   return '';
 }
 
@@ -58,12 +62,15 @@ export async function runHook(kind, stdinText, env = process.env, post = postJso
   try {
     payload = JSON.parse(stdinText);
   } catch {
+    if (kind === 'stop') return '';
     return hookOutput(kind, { decision: 'deny', message: 'beckon could not read the hook input.' });
   }
 
   try {
     return hookOutput(kind, await post(url, token, { kind, thread, payload }));
   } catch (e) {
+    // The Stop hook only asks for tidying up, so an unreachable daemon lets the run finish.
+    if (kind === 'stop') return '';
     if (kind === 'pre') {
       return hookOutput(kind, { decision: 'deny', message: `beckon is not reachable (${e.message}), so nothing runs without approval.` });
     }

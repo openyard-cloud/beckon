@@ -13,6 +13,7 @@ test('first turn names the session, later turns resume it', () => {
   const hooks = JSON.parse(first[first.indexOf('--settings') + 1]).hooks;
   assert.equal(hooks.PreToolUse[0].hooks[0].command, '"/n o/node" "/x/hook.mjs" pre');
   assert.equal(hooks.PermissionRequest[0].hooks[0].timeout, 3660);
+  assert.equal(hooks.Stop[0].hooks[0].command, '"/n o/node" "/x/hook.mjs" stop');
   const next = claudeArgs({ sessionId: 'S', resume: true, settings });
   assert.equal(next[next.indexOf('--resume') + 1], 'S');
   assert.ok(!next.includes('--session-id') && !next.includes('--name'));

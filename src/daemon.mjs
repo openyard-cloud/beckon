@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { Progress } from './progress.mjs';
+import { TabTracker } from './tabs.mjs';
 import { slackToPlain, chunkMarkdown, oneLine, duration } from './text.mjs';
 import { matchRule, inputText } from './policy.mjs';
 import { claudeArgs, hookSettings, runClaude as defaultRunClaude, childEnv } from './claude.mjs';
@@ -382,6 +383,7 @@ export class Beckon {
       '- Nobody can answer questions during a run. If you need a decision, end the turn and ask; the answer arrives as the next message.',
       `- You are in a git worktree of the "${project.name}" repository (${project.path})${ref ? `, started from ${ref} on a detached HEAD` : ''}. Create a branch before committing, following the repository's own conventions.`,
       '- Do the work yourself, all the way. Never hand the user a command to run, a button to click or a step to do by hand, not even as an alternative or a fallback: run it. This includes builds, releases, deploys, migrations and pushes, even where the repository notes say the owner usually does them by hand.',
+      '- Close every browser tab or window you opened as soon as you are done with it, and always before your final message, also when the task failed. Prefer ways that open nothing: curl, gh and other CLIs, or headless Playwright, to read pages; Claude in Chrome tabs (closed with tabs_close) when those tools are available. Avoid `open <url>`; if you used it, close that tab afterwards (on macOS, with osascript, matching the exact URL you opened). Close headed browsers you launched. Never close tabs you did not open.',
       '- You do not need to hold back risky steps: beckon sends deploys, releases, pushes to main branches, merges, migrations, publishing and similar actions to the user as an Allow button the moment you run them, and that button is the user\'s decision. If one is denied, do not reach the same result another way; say what is left undone. If the approval itself fails (for example beckon is not reachable), run the same command again once; if it fails again, stop and say so, and the user will reply to continue.',
     ];
     if (project.instructions) lines.push('', project.instructions);
@@ -399,6 +401,8 @@ export class Beckon {
     const run = {
       abort: new AbortController(),
       progress: new Progress({ cwd: t.worktree, startedAt: this.now() }),
+      tabs: new TabTracker(),
+      tabReminders: 0,
       progressTs: null,
       reply: null,
       status: 'working',
@@ -506,6 +510,7 @@ export class Beckon {
       prompt,
       signal: run.abort.signal,
       onEvent: (e) => {
+        run.tabs?.push(e);
         if (run.progress.push(e)) this.refresh(key);
       },
     });
@@ -591,6 +596,7 @@ export class Beckon {
   async onHook({ kind, thread: key, payload }) {
     const t = this.state.threads[key];
     const run = this.running.get(key);
+    if (kind === 'stop') return this.onStop(run);
     if (!t || !run) return { decision: 'deny', message: 'This beckon thread is not running.' };
     const project = this.config.projects[t.project];
     const tool = payload?.tool_name ?? 'unknown tool';
@@ -605,6 +611,18 @@ export class Beckon {
       return this.ask(key, t, run, tool, input, 'needs your permission', true);
     }
     return { decision: 'deny', message: `Unknown hook kind ${kind}` };
+  }
+
+  // Claude is about to end its turn. Tabs it opened in the browser and left open send it back to
+  // close them, twice at most so a tab that will not close cannot keep the run alive.
+  onStop(run) {
+    const open = run?.tabs?.open() ?? [];
+    if (!open.length || run.tabReminders >= 2) return { decision: 'none' };
+    run.tabReminders++;
+    return {
+      decision: 'block',
+      message: `Before finishing, close the browser tabs you opened in this run (tabId ${open.join(', ')}) with the Claude in Chrome tabs_close tool. Leave tabs you did not open alone.`,
+    };
   }
 
   async ask(key, t, run, tool, input, label, offerAllowAll) {
