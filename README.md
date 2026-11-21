@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.svg" width="128" alt="beckon logo: a lowercase b whose bowl is a chat bubble holding a terminal prompt"></p>
+<p align="center"><img src="assets/logo.svg" width="128" alt="beckon logo: a lowercase b whose bowl is a chat bubble shaped like a robot head"></p>
 
 # beckon
 

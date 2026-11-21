@@ -5,12 +5,14 @@
       <stop offset="1" stop-color="#131a22"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
-  <g transform="translate(-22 4)">
-    <path d="M168 112 v240" stroke="#f4f1ea" stroke-width="58" stroke-linecap="round" fill="none"/>
-    <path d="M168 300 a110 110 0 1 1 52 93 L150 414 Z" fill="#f4f1ea"/>
-    <circle cx="278" cy="300" r="62" fill="#1c2530"/>
-    <path d="M252 278 l26 22 l-26 22" stroke="#f6b443" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-    <path d="M290 322 h26" stroke="#f6b443" stroke-width="16" stroke-linecap="round"/>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <g transform="translate(4 1)">
+    <path d="M160 104 v266" stroke="#f4f1ea" stroke-width="58" stroke-linecap="round" fill="none"/>
+    <path d="M160 218 h140 a72 72 0 0 1 72 72 v40 a72 72 0 0 1 -72 72 h-90 l-62 34 v-34 z" fill="#f4f1ea"/>
+    <rect x="196" y="256" width="140" height="74" rx="37" fill="#1c2530"/>
+    <circle cx="236" cy="293" r="15" fill="#f6b443"/>
+    <circle cx="296" cy="293" r="15" fill="#f6b443"/>
+    <path d="M300 218 v-40" stroke="#f4f1ea" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="300" cy="166" r="17" fill="#f6b443"/>
   </g>
 </svg>
