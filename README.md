@@ -179,6 +179,56 @@ Set it up once on the beckon machine:
 
 Screen control acts on the real desktop of the beckon machine. Keep it to the projects that need it, and keep that machine's sessions to what you would let the agent see. The guard does not check key presses (Return in a form can still submit it) or coordinate clicks outside Xcode and Transporter.
 
+## Passwords and one-time codes (optional)
+
+Claude never types a password or a one-time code, and never asks for one in Slack. When a sign-in needs one, the secret goes from you straight into the field:
+
+1. Claude clicks the field, then runs `beckon-secret --label "Apple ID password" --kind password --app "Google Chrome" --domain apple.com`.
+2. The thread says what is being asked for. Each member in `users` gets a DM with an **Enter securely** link.
+3. The link opens a one-time form served by beckon on this machine. It is reachable only from your own devices over [Tailscale](https://tailscale.com), never from the public internet. You type the value on your phone.
+4. Before typing anything, beckon reads the focused field through Accessibility and checks:
+   - the app is the one named;
+   - a password goes into a password field;
+   - for web pages, the address is `https://` on the named domain or one of its subdomains.
+
+   If any check fails, nothing is typed, and Claude is told why.
+5. beckon types the value with Peekaboo's `type --secret-stdin`, then overwrites it in memory. Claude only learns `filled`, `refused`, `cancelled` or `expired`.
+
+How the secret is protected:
+
+| Concern | How it is handled |
+| --- | --- |
+| Network | The form listens on `127.0.0.1` only. Tailscale Serve publishes it over WireGuard to devices signed in to your tailnet; there is no port open to the internet |
+| The link | 256 random bits, one use, expires after `ttlMinutes` (5 by default). Sent by DM; the thread only says that a secret was requested |
+| The page | No scripts, a strict Content-Security-Policy, `no-store`, no referrer, no framing. Requests must use the published host name (stops DNS rebinding) and come from the page itself |
+| The value | Held as bytes and never made into a string. Passed to Peekaboo on stdin, so it never shows in the process list. Not logged, not put on the clipboard, not sent to Slack or Claude, and wiped after typing |
+| Wrong field | The focus check above runs just before typing. Domains must match whole labels, so `apple.com.evil.io` and `evilapple.com` do not pass |
+
+Set it up once:
+
+1. Install [Tailscale](https://tailscale.com/download) on the beckon machine and on your phone, and sign in on both. In the tailnet admin console, turn on MagicDNS and HTTPS certificates.
+2. Publish the form to your tailnet only (`serve`, not `funnel`):
+
+   ```sh
+   tailscale serve --bg --https=443 http://127.0.0.1:8788
+   ```
+
+3. Add the address Tailscale shows to the config, then run `beckon service restart`:
+
+   ```jsonc
+   "secretForm": {
+     "publicUrl": "https://my-mac.tailnet-name.ts.net",
+     "port": 8788,           // default
+     "ttlMinutes": 5         // default
+   }
+   ```
+
+beckon builds its focus reader from `helpers/ax-focus.swift` the first time (it needs `swiftc` from Xcode or the Command Line Tools). It types with the Peekaboo build from [screen control](#screen-control-optional) (`peekaboo` and `beckon-ax` default to `~/.beckon/bin`). Both run with the Accessibility permission you gave for screen control.
+
+Two things to know:
+- A one-time code you type is visible in the field until it is submitted, so a screenshot Claude takes right then could show it. Codes expire quickly.
+- Anyone who can read the DM *and* is signed in to your tailnet could open the link first. Keep the tailnet to your own devices.
+
 ## Config
 
 ```jsonc
@@ -230,6 +280,7 @@ Changes to this file apply without a restart (see [Editing the config file](#edi
 ## Security notes
 
 - **Only listed members.** Anyone not in `users` is ignored, and only listed members can press the buttons. A Slack message is still an instruction to an agent with your access, so keep beckon's channels to people you trust.
+- **Secrets.** Passwords and one-time codes go through the [secret handoff](#passwords-and-one-time-codes-optional), never through Claude or Slack. Screen control refuses to type into password fields.
 - **Approval guards.** The approval hook fails closed. If the beckon process is unreachable, the action is denied.
 - **What the rules match.** Always-asked rules match command text, which catches routine mistakes but is not a sandbox. Give the host's CLIs only the access you would give the agent, and protect `main` with branch protection as well.
 - **Tokens.** `~/.beckon/env` holds your Slack tokens. `beckon init` creates it with mode 600, and `beckon doctor` fixes the mode if it drifts.

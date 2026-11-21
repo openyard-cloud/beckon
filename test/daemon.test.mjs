@@ -7,9 +7,12 @@ import { Beckon } from '../src/daemon.mjs';
 import { validateConfig } from '../src/config.mjs';
 import { StateStore } from '../src/state.mjs';
 import { startHookServer } from '../src/hookserver.mjs';
+import { SecretBroker, startSecretServer } from '../src/secrets.mjs';
+import { request as httpRequest } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { FakeSlack, FAKE_CLAUDE, HOOK_SCRIPT, tempDir, waitFor } from './helpers.mjs';
 
-async function setup({ config: extra = {}, env: extraEnv = {}, withFile = false } = {}) {
+async function setup({ config: extra = {}, env: extraEnv = {}, withFile = false, beckonOptions = {} } = {}) {
   const home = tempDir();
   const raw = {
     users: ['U1'],
@@ -43,6 +46,7 @@ async function setup({ config: extra = {}, env: extraEnv = {}, withFile = false 
     },
     removeWorktree: async () => ({ removed: true }),
     configFile,
+    ...beckonOptions,
   });
   const hook = await startHookServer((body) => beckon.onHook(body));
   await beckon.start({ hook, background: false });
@@ -428,5 +432,46 @@ test('a reply in a thread whose project was removed says so', async () => {
   await beckon.handleEvent(mention('remove project other'));
   await beckon.handleEvent(msg({ text: 'and again', thread_ts: first.ts }));
   assert.match(lastText(slack), /no longer in beckon/);
+  await close();
+});
+
+test('a secret goes from the private form into the field, and Claude only learns the outcome', async () => {
+  const typed = [];
+  const broker = new SecretBroker({
+    publicUrl: 'https://mac.tail.ts.net',
+    readFocus: async () => ({ app: 'Google Chrome', bundleId: 'com.google.Chrome', role: 'AXTextField', subrole: 'AXSecureTextField', url: 'https://appleid.apple.com/' }),
+    typeSecret: async ({ secret }) => { typed.push(Buffer.from(secret).toString()); },
+  });
+  const server = await startSecretServer(broker, { port: 0 });
+  const { beckon, slack, claudeRuns, done, close } = await setup({
+    beckonOptions: { secrets: broker, secretScript: fileURLToPath(new URL('../bin/beckon-secret.mjs', import.meta.url)) },
+  });
+  await beckon.handleEvent(mention('SECRET'));
+  const dm = await waitFor(() => slack.posts().find((p) => p.channel === 'U1' && p.blocks?.some((b) => b.type === 'actions')));
+  const link = dm.blocks.find((b) => b.type === 'actions').elements.find((e) => e.action_id === 'beckon_secret_open').url;
+  const notice = slack.posts().find((p) => p.text?.startsWith('Secret needed'));
+  assert.ok(notice && !JSON.stringify(notice).includes(link), 'the thread does not get the link');
+  assert.match(claudeRuns()[0].argv[claudeRuns()[0].argv.indexOf('--append-system-prompt') + 1], /beckon-secret\.mjs/);
+
+  await new Promise((resolve, reject) => {
+    const r = httpRequest({ host: '127.0.0.1', port: server.port, path: new URL(link).pathname, method: 'POST', headers: { host: 'mac.tail.ts.net', 'content-type': 'application/x-www-form-urlencoded' } }, (res) => { res.resume(); res.on('end', resolve); });
+    r.on('error', reject);
+    r.end('secret=s3cret');
+  });
+  await done();
+  assert.deepEqual(typed, ['s3cret']);
+  const reply = slack.texts().find((t) => t?.startsWith('secret:'));
+  assert.match(reply, /"status":"filled"/);
+  assert.ok(!slack.calls.some((c) => JSON.stringify(c.body).includes('s3cret')), 'the value never reaches Slack');
+  assert.ok(slack.find('chat.update').some((c) => /filled in/.test(JSON.stringify(c.body.blocks))));
+  await close();
+  await server.close();
+});
+
+test('without secret handoff set up, Claude is told to ask for a manual sign-in', async () => {
+  const { beckon, slack, done, close } = await setup();
+  await beckon.handleEvent(mention('SECRET'));
+  await done();
+  assert.match(slack.texts().find((t) => t?.startsWith('secret:')), /"status":"unavailable"/);
   await close();
 });

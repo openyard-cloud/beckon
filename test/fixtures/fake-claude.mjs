@@ -6,6 +6,7 @@
 //   SLOW            finish after 0.7 seconds
 //   SLEEP           wait until killed
 //   TABS            open a browser tab, then close it only when the Stop hook asks
+//   SECRET          ask beckon for a password with bin/beckon-secret.mjs and report the result
 //   anything else   reply "echo: <prompt>"
 import { execSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
@@ -61,6 +62,12 @@ if (run || perm) {
     }
   }
   emit({ type: 'result', subtype: 'success', is_error: false, result: verdict === 'ran' ? `ran ${command}` : `denied: ${reason}`, num_turns: 2 });
+} else if (prompt.includes('SECRET')) {
+  const { spawnSync } = await import('node:child_process');
+  const script = new URL('../../bin/beckon-secret.mjs', import.meta.url).pathname;
+  emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 's1', name: 'Bash', input: { command: `node ${script} --label "Apple ID password"` } }] } });
+  const r = spawnSync(process.execPath, [script, '--label', 'Apple ID password', '--kind', 'password', '--app', 'Google Chrome', '--domain', 'apple.com'], { encoding: 'utf8', env: process.env });
+  emit({ type: 'result', subtype: 'success', is_error: false, result: `secret: ${r.stdout.trim()}`, num_turns: 2 });
 } else if (prompt.includes('TABS')) {
   const tool = (id, name, input, text) => {
     emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });

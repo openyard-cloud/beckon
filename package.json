@@ -9,6 +9,7 @@
   "files": [
     "bin",
     "src",
+    "helpers",
     "slack-app-manifest.json",
     "README.md",
     "LICENSE"
