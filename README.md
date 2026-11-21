@@ -52,7 +52,7 @@ Mention `@beckon` with a task. It starts Claude Code in a fresh git worktree of 
    - Copy *OAuth & Permissions > Bot User OAuth Token* (`xoxb-...`) into `~/.beckon/env` as `SLACK_BOT_TOKEN`.
    - Under *Basic Information > App-Level Tokens*, generate a token with the `connections:write` scope. Copy it (`xapp-...`) into the same file as `SLACK_APP_TOKEN`.
 
-3. **Configure** `~/.beckon/config.json`: your Slack member ID (*profile > ⋯ > Copy member ID*), your projects and their channels.
+3. **Configure** `~/.beckon/config.json`: your Slack member ID (*profile > ⋯ > Copy member ID*) and at least one project. You can add more projects and channels from Slack later (see [Managing projects from Slack](#managing-projects-from-slack)).
 
 4. **Invite beckon** into each project channel with `/invite @beckon`.
 
@@ -66,19 +66,65 @@ Mention `@beckon` with a task. It starts Claude Code in a fresh git worktree of 
 
 ## Using it
 
+### Give it work
+
 | You do | beckon does |
 | --- | --- |
-| Mention `@beckon <task>` in a project channel | Starts a new thread, worktree and Claude session |
+| Mention `@beckon <task>` in a project's channel | Starts a new thread, worktree and Claude session |
 | Reply in that thread (no mention needed) | Continues the same session |
-| DM beckon | Same, in the `defaultProject` |
-| Start with `otherproject: <task>` | Uses that project instead |
+| DM beckon | Same, in the default project |
+| Start with `otherproject: <task>`, anywhere | Uses that project instead (case does not matter) |
 | Mention `@beckon` inside an existing discussion thread | Reads the thread first, then works on your request |
 | Reply `stop`, or press **Stop** | Stops the current run; reply again to continue |
-| Mention `@beckon status` | Lists what is running and queued |
+| Mention `@beckon status` | Lists what is running and queued, per project |
+| Mention `@beckon help` | Lists the commands, the projects and their channels |
 
 Each task runs in its own worktree under `~/.beckon/worktrees`, created from the latest remote copy of the base branch on a detached HEAD. Claude creates a branch with your repository's naming conventions, so several tasks on one repository never collide. A worktree that has been idle for `keepDays` is removed, but only if that loses nothing: uncommitted changes and commits that are not on any branch keep it alive.
 
 Claude closes the browser tabs it opened before it finishes. Tabs opened with Claude in Chrome are tracked, and a run that tries to end with some still open is sent back to close them (twice at most).
+
+### Which project a message goes to
+
+beckon can serve any number of projects. Each one is a git repository on the machine beckon runs on. A new message picks its project in this order:
+
+1. **A `project:` prefix.** `@beckon hush: fix the build` goes to `hush` from any channel or DM, whatever the channel is linked to. Case does not matter: `Hush:` works too.
+2. **The channel.** A message in a channel linked to a project goes to that project. A channel belongs to one project at most, and a project can have several channels.
+3. **The default project, in DMs.** A DM without a prefix goes to `defaultProject`. With a single project, that project is the default.
+4. **Otherwise nothing runs.** In a channel that is not linked to a project, beckon replies with the project names and asks for a prefix.
+
+A thread keeps the project its first message picked. Replies in it go to the same project even if they start with another project's name, so start a new message to switch projects.
+
+The simplest setup is one channel per project (`#myapp-agent`, `#website-agent`) and your busiest project as the default for DMs.
+
+### Managing projects from Slack
+
+Mention beckon with one of these, or send it in a DM. Only the members in `users` can use them. Each one edits `~/.beckon/config.json` and takes effect at once, without a restart.
+
+| Command | What it does |
+| --- | --- |
+| `projects` | Lists the projects, their folders and channels, the default, and what is running |
+| `add project <name> <path> [#channel ...]` | Adds a git repository on the beckon machine, optionally linked to channels. Example: `add project website ~/code/website #website-agent` |
+| `link <project>` | In a channel: sends that channel's tasks to the project, moving it away from the project it had |
+| `link #channel <project>` | The same, for another channel |
+| `unlink`, or `unlink #channel` | The channel is no longer linked; messages there need a `project:` prefix |
+| `default <project>` | The project DMs go to |
+| `remove project <name>` | Takes the project out of beckon. The repository, branches and worktrees are not touched |
+
+A few things are checked before anything is saved:
+- `add project` needs a folder that exists and is a git repository, and a name that is not taken. Names ignore case and use letters, digits, dot, dash and underscore.
+- `remove project` waits until the project has nothing running or queued, refuses to remove the last project, and refuses while a schedule still uses it.
+- The edited config must still be valid, or nothing is written.
+
+beckon only sees channels it is a member of. When you link a channel beckon is not in yet, the reply tells you, and you type `/invite @beckon` in that channel. This is required for private channels.
+
+Commands have a fixed shape, so a task that happens to start with the same word still goes to Claude: `link the PR to the issue` is a task, not a command.
+
+### Editing the config file
+
+You can also edit `~/.beckon/config.json` by hand. beckon notices the change and applies it within a second, without a restart:
+- Projects, channels, the default project, schedules, `users` and the numeric settings change for new work.
+- A run already going keeps the settings it started with.
+- If the new file is not valid JSON or has problems, beckon keeps the config it has and writes the problems to its log (`~/.beckon/logs/beckon.log`). Run `beckon doctor` to see them.
 
 ## Approvals
 
@@ -139,7 +185,7 @@ When a request is denied, Claude is told not to reach the same result another wa
 }
 ```
 
-Set `BECKON_HOME` to keep everything somewhere other than `~/.beckon`.
+Changes to this file apply without a restart (see [Editing the config file](#editing-the-config-file)). Set `BECKON_HOME` to keep everything somewhere other than `~/.beckon`.
 
 ## Running all the time
 

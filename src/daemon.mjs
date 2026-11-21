@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { Progress } from './progress.mjs';
 import { TabTracker } from './tabs.mjs';
-import { slackToPlain, chunkMarkdown, oneLine, duration } from './text.mjs';
+import { findName, checkRepo, addProject, removeProject, linkChannel, unlinkChannel, setDefault, readRaw, writeRaw } from './projects.mjs';
+import { slackToPlain, commandText, chunkMarkdown, oneLine, duration } from './text.mjs';
 import { matchRule, inputText } from './policy.mjs';
 import { claudeArgs, hookSettings, runClaude as defaultRunClaude, childEnv } from './claude.mjs';
 import { ensureWorktree as defaultEnsureWorktree, removeWorktree as defaultRemoveWorktree } from './worktree.mjs';
@@ -72,8 +73,10 @@ export class Beckon {
     removeWorktree = defaultRemoveWorktree,
     runSetup = defaultRunSetup,
     now = () => Date.now(),
+    configFile = null,
   }) {
-    Object.assign(this, { config, slack, state, worktreesDir, nodePath, hookScript, env, log, runClaude, ensureWorktree, removeWorktree, runSetup, now });
+    Object.assign(this, { config, slack, state, worktreesDir, nodePath, hookScript, env, log, runClaude, ensureWorktree, removeWorktree, runSetup, now, configFile });
+    this.configText = null;
     this.hook = null;
     this.botUserId = null;
     this.teamUrl = null;
@@ -96,6 +99,17 @@ export class Beckon {
     this.botUserId = auth.user_id;
     this.teamUrl = auth.url ?? null;
     await this.resolveChannels();
+    this.loadSchedules();
+    if (background) {
+      this.timers.push(setInterval(() => this.tick().catch((e) => this.log(`Schedule check failed: ${e.message}`)), TICK_MS));
+      this.timers.push(setInterval(() => this.gc().catch((e) => this.log(`Cleanup failed: ${e.message}`)), GC_MS));
+      this.gc().catch((e) => this.log(`Cleanup failed: ${e.message}`));
+    }
+    this.log(`Connected to Slack as <@${this.botUserId}>; projects: ${Object.keys(this.config.projects).join(', ')}`);
+  }
+
+  loadSchedules() {
+    this.crons = [];
     for (const s of this.config.schedules) {
       try {
         this.crons.push({ ...s, parsed: parseCron(s.cron) });
@@ -103,12 +117,17 @@ export class Beckon {
         this.log(`Schedule "${s.name}" is skipped: ${e.message}`);
       }
     }
-    if (background) {
-      this.timers.push(setInterval(() => this.tick().catch((e) => this.log(`Schedule check failed: ${e.message}`)), TICK_MS));
-      this.timers.push(setInterval(() => this.gc().catch((e) => this.log(`Cleanup failed: ${e.message}`)), GC_MS));
-      this.gc().catch((e) => this.log(`Cleanup failed: ${e.message}`));
-    }
-    this.log(`Connected to Slack as <@${this.botUserId}>; projects: ${Object.keys(this.config.projects).join(', ')}`);
+  }
+
+  // Switch to a new config without a restart: after an edit from Slack, or when the file
+  // changes on disk. Running turns keep going with the project settings they started with.
+  async applyConfig(config, text = null) {
+    this.config = config;
+    if (text !== null) this.configText = text;
+    await this.resolveChannels();
+    this.loadSchedules();
+    this.drain();
+    this.log(`Config applied; projects: ${Object.keys(config.projects).join(', ')}`);
   }
 
   // Stop taking new work, let running turns finish (approvals still work), then stop whatever
@@ -155,6 +174,8 @@ export class Beckon {
     for (const s of this.config.schedules) wanted.add(s.channel);
     const names = [...wanted].filter((c) => c.startsWith('#'));
     const byName = new Map();
+    const channelIds = new Map();
+    const channelProjects = new Map();
     if (names.length) {
       let cursor;
       do {
@@ -174,14 +195,17 @@ export class Beckon {
         this.log(`Channel ${c} was not found. For a private channel, invite beckon to it first.`);
         continue;
       }
-      this.channelIds.set(c, id);
+      channelIds.set(c, id);
     }
     for (const p of Object.values(this.config.projects)) {
       for (const c of p.channels) {
-        const id = this.channelIds.get(c);
-        if (id) this.channelProjects.set(id, p.name);
+        const id = channelIds.get(c);
+        if (id) channelProjects.set(id, p.name);
       }
     }
+    // Swapped in at once, so a message arriving meanwhile never sees a half-built map.
+    this.channelIds = channelIds;
+    this.channelProjects = channelProjects;
   }
 
   allowed(user) {
@@ -245,6 +269,9 @@ export class Beckon {
     if (known) {
       if (STOP_WORDS.test(text)) return this.stop(key, ev.user);
       if (!text) return;
+      if (!this.config.projects[known.project]) {
+        return this.post(ev.channel, ev.thread_ts, `The project \`${known.project}\` of this thread is no longer in beckon. Start a new message to work on another project.`);
+      }
       await this.react(ev.channel, ev.ts, 'eyes');
       return this.enqueue(key, { text, user: ev.user, ts: ev.ts });
     }
@@ -252,19 +279,22 @@ export class Beckon {
     const replyTs = ev.thread_ts ?? ev.ts;
     if (/^(status)$/i.test(text)) return this.postStatus(ev.channel, replyTs);
     if (!text || /^(help|\?)$/i.test(text)) return this.postHelp(ev.channel, replyTs);
+    if (await this.handleCommand(ev, replyTs, isDM)) return;
 
     let projectName = null;
     let body = text;
     const prefix = text.match(PROJECT_PREFIX);
-    if (prefix && this.config.projects[prefix[1]]) {
-      projectName = prefix[1];
+    const prefixed = prefix && findName(this.config.projects, prefix[1]);
+    if (prefixed) {
+      projectName = prefixed;
       body = text.slice(prefix[0].length);
     } else {
       projectName = this.channelProjects.get(ev.channel) ?? (isDM ? this.config.defaultProject : null);
     }
     if (!projectName) {
       const names = Object.keys(this.config.projects).map((n) => `\`${n}\``).join(', ');
-      await this.post(ev.channel, replyTs, `This channel is not linked to a project. Start your message with the project name, like \`${Object.keys(this.config.projects)[0]}: ...\`. Projects: ${names}.`);
+      const first = Object.keys(this.config.projects)[0];
+      await this.post(ev.channel, replyTs, `This channel is not linked to a project. Start your message with the project name, like \`${first}: ...\`, or link this channel with \`@beckon link ${first}\`. Projects: ${names}.`);
       return;
     }
 
@@ -297,17 +327,193 @@ export class Beckon {
   }
 
   async postHelp(channel, threadTs) {
-    const projects = Object.values(this.config.projects)
-      .map((p) => `\`${p.name}\`${p.channels.length ? ` (${p.channels.join(', ')})` : ''}`)
-      .join(', ');
-    await this.postMarkdown(channel, threadTs, [
-      '**beckon** runs Claude Code on its host machine for you.',
+    const projects = this.projectLines().join('\n');
+    await this.post(channel, threadTs, 'beckon help', [section([
+      '*beckon* runs Claude Code on its host machine for you.',
       '',
-      `- Mention me with a task in a project's channel, or DM me. Start with \`project:\` to pick another project. Projects: ${projects}.`,
-      '- Each task gets its own thread and its own git worktree. Reply in the thread to continue.',
-      '- Reply `stop` in a thread to stop it. Mention me with `status` to see what is running.',
-      '- Risky actions (deploys, pushes to main, merges, migrations, publishing) wait for an approval button.',
-    ].join('\n'));
+      '*Give it work*',
+      '• Mention me with a task in a project\'s channel, or DM me (DMs go to the default project).',
+      '• Start with `project:` to pick a project anywhere, like `hush: fix the build`. Case does not matter.',
+      '• Each task gets its own thread and git worktree. Reply in the thread to continue; `stop` stops it.',
+      '• Risky actions (deploys, pushes to main, merges, migrations, releases) wait for an Allow button.',
+      '',
+      '*Commands* (mention me, or DM me)',
+      '• `status`: what is running and queued',
+      '• `projects`: the projects, their channels and the default',
+      '• `add project <name> <path> [#channel]`: add a git repository on this machine',
+      '• `link <project>` in a channel, or `link #channel <project>`: send that channel\'s tasks to the project',
+      '• `unlink` in a channel, or `unlink #channel`',
+      '• `default <project>`: the project DMs go to',
+      '• `remove project <name>`',
+      '',
+      '*Projects*',
+      projects,
+    ].join('\n'))]);
+  }
+
+  projectLines() {
+    const running = new Map();
+    for (const key of [...this.running.keys(), ...this.waiting]) {
+      const p = this.state.threads[key]?.project;
+      if (p) running.set(p, (running.get(p) ?? 0) + 1);
+    }
+    return Object.values(this.config.projects).map((p) => {
+      const channels = p.channels.map((c) => this.channelLabel(c)).join(', ') || 'no channel';
+      const extra = [p.name === this.config.defaultProject ? 'default' : null, running.get(p.name) ? `${running.get(p.name)} running or queued` : null].filter(Boolean);
+      return `• *${p.name}*${extra.length ? ` (${extra.join(', ')})` : ''}: \`${p.path}\`, ${channels}`;
+    });
+  }
+
+  channelLabel(c) {
+    const id = this.channelIds.get(c) ?? (c.startsWith('#') ? null : c);
+    return id ? `<#${id}>` : `${c} (not found: invite me to it)`;
+  }
+
+  // ---- managing projects from Slack ----
+
+  // Returns true when the message was a command. Commands have a fixed shape, so an ordinary
+  // task that happens to start with "add" or "link" still goes to Claude.
+  async handleCommand(ev, replyTs, isDM) {
+    const tokens = commandText(ev.text, this.botUserId).split(/\s+/).filter(Boolean);
+    const isChannel = (w) => /^#\S+$/.test(w);
+    const channels = tokens.filter(isChannel).map((w) => (w.startsWith('#:') ? w.slice(2) : w));
+    const words = tokens.filter((w) => !isChannel(w));
+    const verb = words[0]?.toLowerCase();
+    const second = words[1]?.toLowerCase();
+    const reply = (text) => this.post(ev.channel, replyTs, text);
+    const here = isDM ? [] : [ev.channel];
+
+    if (/^projects?$/.test(verb) && words.length === 1 && !channels.length) {
+      await reply(`*Projects*\n${this.projectLines().join('\n')}`);
+      return true;
+    }
+    if (verb === 'add' && second === 'project') {
+      if (words.length !== 4 || !/^[~/]/.test(words[3])) {
+        await reply('Usage: `add project <name> <path> [#channel]`, for example `add project hush ~/Projects/hush #hush-agent`. The path is a folder on the machine beckon runs on.');
+        return true;
+      }
+      const [, , name, path] = words;
+      const taken = findName(this.config.projects, name);
+      const problem = taken ? `there is already a project called \`${taken}\`.` : checkRepo(path);
+      if (problem) {
+        await reply(`Not added: ${problem}`);
+        return true;
+      }
+      const config = await this.editConfig(reply, (raw) => addProject(raw, { name, path, channels }, this.sameChannel()));
+      if (!config) return true;
+      const key = findName(config.projects, name);
+      const where = channels.length ? `, linked to ${channels.map((c) => this.channelLabel(c)).join(', ')}` : '';
+      await reply(`Added project *${key}* (\`${path}\`)${where}. Start a message with \`${key}:\` to use it${channels.length ? ', or mention me in its channel' : ''}.${await this.membershipHint(channels, ev.channel)}`);
+      return true;
+    }
+    if ((verb === 'remove' || verb === 'delete') && second === 'project' && words.length === 3) {
+      const key = findName(this.config.projects, words[2]);
+      if (key && this.busy(key)) {
+        await reply(`\`${key}\` has work running or queued. Wait for it to finish, or stop it, then remove the project.`);
+        return true;
+      }
+      const config = await this.editConfig(reply, (raw) => removeProject(raw, words[2]));
+      if (config) await reply(`Removed project *${key}* from beckon. Its repository and branches are untouched.${config.defaultProject ? '' : ' There is no default project now: DMs need a `project:` prefix until you set one with `default <project>`.'}`);
+      return true;
+    }
+    if (verb === 'link' && words.length === 2) {
+      const targets = channels.length ? channels : here;
+      if (!targets.length) {
+        await reply('Name the channel: `link #channel <project>`.');
+        return true;
+      }
+      const config = await this.editConfig(reply, (raw) => {
+        for (const c of targets) {
+          const err = linkChannel(raw, c, words[1], this.sameChannel());
+          if (err) return err;
+        }
+        return null;
+      });
+      if (config) {
+        const key = findName(config.projects, words[1]);
+        await reply(`Tasks from ${targets.map((c) => this.channelLabel(c)).join(', ')} now go to *${key}*.${await this.membershipHint(targets, ev.channel)}`);
+      }
+      return true;
+    }
+    if (verb === 'unlink' && words.length === 1) {
+      const targets = channels.length ? channels : here;
+      if (!targets.length) {
+        await reply('Name the channel: `unlink #channel`.');
+        return true;
+      }
+      const labels = targets.map((c) => this.channelLabel(c)).join(', ');
+      const config = await this.editConfig(reply, (raw) => {
+        for (const c of targets) {
+          const err = unlinkChannel(raw, c, this.sameChannel());
+          if (err) return err;
+        }
+        return null;
+      });
+      if (config) await reply(`${labels} is no longer linked to a project. Messages there need a \`project:\` prefix.`);
+      return true;
+    }
+    if (verb === 'default' && words.length === 2 && !channels.length) {
+      const config = await this.editConfig(reply, (raw) => setDefault(raw, words[1]));
+      if (config) await reply(`DMs now go to *${config.defaultProject}*.`);
+      return true;
+    }
+    return false;
+  }
+
+  busy(project) {
+    return [...this.running.keys(), ...this.waiting].some((k) => this.state.threads[k]?.project === project);
+  }
+
+  // Two ways of naming a channel (an ID or a #name) refer to the same one.
+  sameChannel() {
+    const id = (c) => this.channelIds.get(c) ?? c;
+    return (a, b) => a === b || id(a) === id(b);
+  }
+
+  async membershipHint(channels, current) {
+    const missing = [];
+    for (const c of channels) {
+      const id = this.channelIds.get(c) ?? (c.startsWith('#') ? null : c);
+      if (id === current) continue;
+      if (!id) {
+        missing.push(c);
+        continue;
+      }
+      try {
+        const info = await this.slack.call('conversations.info', { channel: id });
+        if (info.channel && info.channel.is_member === false) missing.push(`<#${id}>`);
+      } catch {
+        missing.push(`<#${id}>`);
+      }
+    }
+    return missing.length ? `\nI am not in ${missing.join(', ')} yet: type \`/invite @beckon\` there, or I will not see messages in it.` : '';
+  }
+
+  // Applies an edit to config.json: read, change, validate, write, then switch to it.
+  async editConfig(reply, edit) {
+    if (!this.configFile) {
+      await reply('This beckon has no config file to change. Edit its config and restart it.');
+      return null;
+    }
+    let raw;
+    try {
+      ({ raw } = readRaw(this.configFile));
+    } catch (e) {
+      await reply(`Could not read ${this.configFile}: ${e.message}`);
+      return null;
+    }
+    const err = edit(raw);
+    if (err) {
+      await reply(err);
+      return null;
+    }
+    const res = writeRaw(this.configFile, raw);
+    if (res.errors) {
+      await reply(`Not saved, because the config would not be valid:\n${res.errors.map((e) => `• ${e}`).join('\n')}`);
+      return null;
+    }
+    await this.applyConfig(res.config, res.text);
+    return res.config;
   }
 
   async postStatus(channel, threadTs) {

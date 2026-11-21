@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { Beckon } from '../src/daemon.mjs';
 import { validateConfig } from '../src/config.mjs';
@@ -8,9 +9,9 @@ import { StateStore } from '../src/state.mjs';
 import { startHookServer } from '../src/hookserver.mjs';
 import { FakeSlack, FAKE_CLAUDE, HOOK_SCRIPT, tempDir, waitFor } from './helpers.mjs';
 
-async function setup({ config: extra = {}, env: extraEnv = {} } = {}) {
+async function setup({ config: extra = {}, env: extraEnv = {}, withFile = false } = {}) {
   const home = tempDir();
-  const { config, errors } = validateConfig({
+  const raw = {
     users: ['U1'],
     projects: {
       proj: { path: home, channels: ['#proj'], alwaysAsk: ['playwright test'] },
@@ -20,8 +21,11 @@ async function setup({ config: extra = {}, env: extraEnv = {} } = {}) {
     claudePath: FAKE_CLAUDE,
     approvalTimeoutMinutes: 1,
     ...extra,
-  });
+  };
+  const { config, errors } = validateConfig(raw);
   assert.deepEqual(errors, []);
+  const configFile = withFile ? join(home, 'config.json') : null;
+  if (configFile) writeFileSync(configFile, JSON.stringify(raw, null, 2));
   const slack = new FakeSlack();
   const state = new StateStore(join(home, 'state.json'));
   const logFile = join(home, 'claude.log');
@@ -38,6 +42,7 @@ async function setup({ config: extra = {}, env: extraEnv = {} } = {}) {
       return { created, ref: 'origin/main' };
     },
     removeWorktree: async () => ({ removed: true }),
+    configFile,
   });
   const hook = await startHookServer((body) => beckon.onHook(body));
   await beckon.start({ hook, background: false });
@@ -49,7 +54,7 @@ async function setup({ config: extra = {}, env: extraEnv = {} } = {}) {
     await beckon.stopAll();
     await hook.close();
   };
-  return { beckon, slack, state, claudeRuns, done, close };
+  return { beckon, slack, state, claudeRuns, done, close, home, configFile };
 }
 
 let tsN = 0;
@@ -350,4 +355,78 @@ test('the summary line is the notification text and bold at the top of the answe
   assert.equal(emphasizeSummary('Pushed the fix.\n\nDetails.'), '**Pushed the fix.**\n\nDetails.');
   assert.equal(emphasizeSummary('# Heading\ntext'), '# Heading\ntext');
   assert.equal(emphasizeSummary('- a list'), '- a list');
+});
+
+const lastText = (slack) => slack.posts().at(-1).blocks?.[0]?.text?.text ?? slack.posts().at(-1).text;
+
+test('projects can be added, linked, defaulted and removed from Slack', async () => {
+  const { beckon, slack, configFile, home, done, close } = await setup({ withFile: true });
+  const repo = join(home, 'hush');
+  mkdirSync(repo);
+  execFileSync('git', ['init', '-q', repo]);
+
+  await beckon.handleEvent(mention('add project hush /nope/missing'));
+  assert.match(lastText(slack), /Not added: .*does not exist/);
+
+  await beckon.handleEvent(mention(`add project Hush ${repo} <#CHUSH|hush-agent>`));
+  assert.match(lastText(slack), /Added project \*Hush\*.*<#CHUSH>/);
+  let saved = JSON.parse(readFileSync(configFile, 'utf8'));
+  assert.deepEqual(saved.projects.Hush, { path: repo, channels: ['CHUSH'] });
+  assert.equal(beckon.channelProjects.get('CHUSH'), 'Hush', 'applied without a restart');
+
+  await beckon.handleEvent(mention('add project hush ~/x'));
+  assert.match(lastText(slack), /Not added: there is already a project called `Hush`/);
+
+  await beckon.handleEvent(mention('hush: say hi', { channel: 'CPROJ' }));
+  await done();
+  assert.equal(Object.values(beckon.state.threads).at(-1).project, 'Hush', 'prefixes ignore case');
+
+  await beckon.handleEvent(mention('link other', { channel: 'CHUSH' }));
+  assert.match(lastText(slack), /<#CHUSH> now go to \*other\*/);
+  saved = JSON.parse(readFileSync(configFile, 'utf8'));
+  assert.deepEqual(saved.projects.Hush.channels, []);
+  assert.deepEqual(saved.projects.other.channels, ['CHUSH']);
+
+  await beckon.handleEvent(mention('default hush'));
+  assert.equal(JSON.parse(readFileSync(configFile, 'utf8')).defaultProject, 'Hush');
+
+  await beckon.handleEvent(mention('projects'));
+  assert.match(lastText(slack), /\*Hush\* \(default\)/);
+
+  await beckon.handleEvent(mention('remove project hush'));
+  assert.match(lastText(slack), /Removed project \*Hush\*.*no default project/);
+  saved = JSON.parse(readFileSync(configFile, 'utf8'));
+  assert.equal(saved.projects.Hush, undefined);
+  assert.equal(saved.defaultProject, undefined);
+  await close();
+});
+
+test('ordinary tasks that start like a command still go to Claude', async () => {
+  const { beckon, slack, done, close } = await setup({ withFile: true });
+  await beckon.handleEvent(mention('link the PR to the issue'));
+  await beckon.handleEvent(mention('add a project page to the site'));
+  await done();
+  assert.ok(slack.texts().includes('echo: link the PR to the issue'));
+  assert.ok(slack.texts().includes('echo: add a project page to the site'));
+  await close();
+});
+
+test('an invalid edit is refused and the file is left alone', async () => {
+  const { beckon, slack, configFile, close } = await setup({ withFile: true, config: { schedules: [{ name: 'daily', cron: '0 8 * * *', project: 'other', channel: 'CPROJ', prompt: 'x' }] } });
+  const before = readFileSync(configFile, 'utf8');
+  await beckon.handleEvent(mention('remove project other'));
+  assert.match(lastText(slack), /used by the schedule "daily"/);
+  assert.equal(readFileSync(configFile, 'utf8'), before);
+  await close();
+});
+
+test('a reply in a thread whose project was removed says so', async () => {
+  const { beckon, slack, done, close } = await setup({ withFile: true });
+  const first = mention('other: hi');
+  await beckon.handleEvent(first);
+  await done();
+  await beckon.handleEvent(mention('remove project other'));
+  await beckon.handleEvent(msg({ text: 'and again', thread_ts: first.ts }));
+  assert.match(lastText(slack), /no longer in beckon/);
+  await close();
 });

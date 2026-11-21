@@ -11,12 +11,19 @@ export function decodeEntities(s) {
 export function slackToPlain(text, botUserId) {
   let s = String(text ?? '');
   if (botUserId) s = s.split(`<@${botUserId}>`).join('');
-  s = s.replace(/<#[A-Z0-9]+\|([^>]*)>/g, '#$1');
+  s = s.replace(/<#([A-Z0-9]+)(?:\|([^>]*))?>/g, (_, id, name) => `#${name || id}`);
   s = s.replace(/<!(here|channel|everyone)>/g, '@$1');
   s = s.replace(/<!subteam\^[A-Z0-9]+\|([^>]*)>/g, '$1');
   s = s.replace(/<((?:https?|mailto):[^|>]+)\|([^>]+)>/g, (_, url, label) => (label === url ? url : `${label} (${url})`));
   s = s.replace(/<((?:https?|mailto):[^>]+)>/g, '$1');
   return decodeEntities(s).trim();
+}
+
+// The text of a command, with channel mentions kept as their IDs, written #:C0123 (a colon
+// cannot appear in a channel name), so the channel can be stored without a lookup by name.
+export function commandText(text, botUserId) {
+  const s = String(text ?? '').replace(/<#([A-Z0-9]+)(?:\|[^>]*)?>/g, ' #:$1 ');
+  return slackToPlain(s, botUserId);
 }
 
 // Split long markdown into Slack-sized pieces at paragraph or line breaks. A piece that ends
