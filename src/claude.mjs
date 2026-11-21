@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
-// Settings passed with --settings: the two hooks that route tool use through beckon. They add
+// Settings passed with --settings: the hooks that route tool use through beckon, plus a Stop
+// hook that keeps the run going until it has closed the browser tabs it opened. They add
 // to the user's and the repository's own settings rather than replacing them.
 export function hookSettings({ nodePath, hookScript, timeoutSeconds }) {
   const q = (s) => `"${String(s).replace(/(["\\$`])/g, '\\$1')}"`;
@@ -9,6 +10,7 @@ export function hookSettings({ nodePath, hookScript, timeoutSeconds }) {
     hooks: {
       PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: command('pre'), timeout: timeoutSeconds }] }],
       PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command: command('permission'), timeout: timeoutSeconds }] }],
+      Stop: [{ hooks: [{ type: 'command', command: command('stop'), timeout: 30 }] }],
     },
   };
 }
@@ -44,7 +46,16 @@ export function childEnv(base, extra, { allowApiKey = false } = {}) {
 export function runClaude({ bin = 'claude', args, cwd, env, prompt, onEvent = () => {}, signal, spawnImpl = spawn }) {
   return new Promise((resolve) => {
     const started = Date.now();
-    const child = spawnImpl(bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Own process group: a service manager stopping beckon signals beckon's group, and the
+    // run (and the builds it started) must not die with it before beckon decides to stop it.
+    const child = spawnImpl(bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    const killGroup = (sig) => {
+      try {
+        process.kill(-child.pid, sig);
+      } catch {
+        try { child.kill(sig); } catch { /* already gone */ }
+      }
+    };
     let buffer = '';
     let stderr = '';
     let result = null;
@@ -73,8 +84,8 @@ export function runClaude({ bin = 'claude', args, cwd, env, prompt, onEvent = ()
     };
 
     const onAbort = () => {
-      child.kill('SIGTERM');
-      killTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+      killGroup('SIGTERM');
+      killTimer = setTimeout(() => killGroup('SIGKILL'), 5000);
       killTimer.unref?.();
     };
     if (signal) {

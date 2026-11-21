@@ -164,6 +164,7 @@ export function validateConfig(raw) {
     approvalTimeoutMinutes: num('approvalTimeoutMinutes', 60, 1, 1440),
     maxParallel: num('maxParallel', 3, 1, 20),
     keepDays: num('keepDays', 7, 1, 365),
+    shutdownGraceMinutes: num('shutdownGraceMinutes', 30, 0, 240),
     claudePath: typeof raw.claudePath === 'string' ? expandHome(raw.claudePath) : 'claude',
     allowApiKey: raw.allowApiKey === true,
   };

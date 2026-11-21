@@ -5,43 +5,60 @@
 
 const ARGS = String.raw`[^;&|\n]*`;
 
+// A program in command position: at the start, after ; && || | ( or $(, or after a runner such
+// as npx or bundle exec, with optional VAR=value assignments in front. Mentions inside paths,
+// grep patterns or commit messages do not count.
+const AT = String.raw`(?:^|[;&|(\n]\s*|\$\(\s*|\b(?:npx|bunx|pnpm\s+(?:dlx|exec)|yarn|bundle\s+exec|sudo|time|env)\s+(?:-\S+\s+)*)(?:\w+=\S*\s+)*`;
+const cmd = (name) => `${AT}(?:${name})(?:@\\S+)?\\b`;
+
 export const DEFAULT_RULES = [
   {
     label: 'push to a main branch, force push or branch delete',
     tool: '^Bash$',
-    match: String.raw`\bgit\b${ARGS}\bpush\b${ARGS}(\s(main|master|production|prod|release)\b|:(main|master|production|prod)\b|\s--force\b|\s--force-with-lease\b|\s-f\b|\s--delete\b|\s-d\b|\s--mirror\b|\s\+\S)`,
+    match: String.raw`${cmd('git')}(?:\s+-[Cc]\s+\S+)*\s+push\b${ARGS}(\s(main|master|production|prod|release)\b|:(main|master|production|prod)\b|\s--force\b|\s--force-with-lease\b|\s-f\b|\s--delete\b|\s-d\b|\s--mirror\b|\s\+\S)`,
   },
   {
     label: 'merge, release or change repository settings on GitHub',
     tool: '^Bash$',
-    match: String.raw`\bgh\s+(pr\s+merge|release\s+(create|delete|upload|edit)|repo\s+(delete|archive|rename|edit)|secret\s+(set|delete)|variable\s+(set|delete)|workflow\s+(run|enable|disable)|api\b${ARGS}(-X|--method)\s*(POST|PUT|PATCH|DELETE))`,
+    match: String.raw`${cmd('gh')}\s+(pr\s+merge|release\s+(create|delete|upload|edit)|repo\s+(delete|archive|rename|edit)|secret\s+(set|delete)|variable\s+(set|delete)|workflow\s+(run|enable|disable)|api\b${ARGS}(-X|--method)\s*(POST|PUT|PATCH|DELETE))`,
   },
   {
     label: 'deploy or change production',
     tool: '^Bash$',
     match: [
-      String.raw`\bvercel\b${ARGS}(--prod\b|\bpromote\b|\brollback\b|\bdomains?\s+(add|rm|remove)\b|\benv\s+(add|rm|remove)\b|\bremove\b)`,
-      String.raw`\bwrangler\b${ARGS}\b(deploy|publish|rollback|delete|secret\s+(put|delete|bulk)|versions\s+deploy|d1\s+execute\b${ARGS}--remote|d1\s+migrations\s+apply\b${ARGS}--remote|kv\s+\S+\s+(put|delete)|r2\s+object\s+(put|delete))\b`,
-      String.raw`\bkoyeb\b${ARGS}\b(services?|apps?|deployments?|secrets?|domains?)\s+(update|redeploy|create|delete|pause|resume|cancel)\b`,
-      String.raw`\bsupabase\b${ARGS}\b(db\s+(push|reset)|migration\s+(up|repair|squash)|functions\s+(deploy|delete)|secrets\s+(set|unset)|projects\s+delete|branches\s+delete)\b`,
-      String.raw`\bfly(ctl)?\s+(deploy|secrets|scale|destroy|apps\s+destroy|machine\s+(destroy|stop))\b`,
-      String.raw`\brailway\s+(up|redeploy|down|delete)\b`,
-      String.raw`\bnetlify\b${ARGS}\bdeploy\b${ARGS}--prod\b`,
-      String.raw`\bfirebase\b${ARGS}\bdeploy\b`,
-      String.raw`\beas\s+(submit|update)\b`,
-      String.raw`\bheroku\b${ARGS}\b(releases:rollback|ps:scale|apps:destroy|config:(set|unset))\b`,
-      String.raw`\bgit\s+push\s+heroku\b`,
+      String.raw`${cmd('vercel')}${ARGS}(--prod\b|\bpromote\b|\brollback\b|\bdomains?\s+(add|rm|remove)\b|\benv\s+(add|rm|remove)\b|\bremove\b)`,
+      String.raw`${cmd('wrangler')}${ARGS}\b(deploy|publish|rollback|delete|secret\s+(put|delete|bulk)|versions\s+deploy|d1\s+execute\b${ARGS}--remote|d1\s+migrations\s+apply\b${ARGS}--remote|kv\s+\S+\s+(put|delete)|r2\s+object\s+(put|delete))\b`,
+      String.raw`${cmd('koyeb')}${ARGS}\b(services?|apps?|deployments?|secrets?|domains?)\s+(update|redeploy|create|delete|pause|resume|cancel)\b`,
+      String.raw`${cmd('supabase')}${ARGS}\b(db\s+(push|reset)|migration\s+(up|repair|squash)|functions\s+(deploy|delete)|secrets\s+(set|unset)|projects\s+delete|branches\s+delete)\b`,
+      String.raw`${cmd('fly|flyctl')}\s+(deploy|secrets|scale|destroy|apps\s+destroy|machine\s+(destroy|stop))\b`,
+      String.raw`${cmd('railway')}\s+(up|redeploy|down|delete)\b`,
+      String.raw`${cmd('netlify')}${ARGS}\bdeploy\b${ARGS}--prod\b`,
+      String.raw`${cmd('firebase')}${ARGS}\bdeploy\b`,
+      String.raw`${cmd('eas')}\s+(submit|update)\b`,
+      String.raw`${cmd('heroku')}${ARGS}\b(releases:rollback|ps:scale|apps:destroy|config:(set|unset))\b`,
+      String.raw`${cmd('git')}\s+push\s+heroku\b`,
+    ].join('|'),
+  },
+  {
+    label: 'release an app or push a patch to users',
+    tool: '^Bash$',
+    match: [
+      String.raw`${cmd('shorebird')}(?:\s+-\S+)*\s+(release|patch|patches\s+(promote|set-track))\b`,
+      String.raw`${cmd('fastlane')}(?!\s+(--version|-v|lanes|list|env|actions?|search_plugins)\b)\s+\S`,
+      String.raw`${cmd('xcrun')}\s+altool\b${ARGS}--upload`,
+      String.raw`${cmd('firebase')}${ARGS}\bappdistribution:distribute\b`,
+      String.raw`${cmd('eas')}\s+build\b${ARGS}--auto-submit\b`,
     ].join('|'),
   },
   {
     label: 'publish a package or image',
     tool: '^Bash$',
-    match: String.raw`\b(npm|pnpm|yarn|bun)\s+(publish|unpublish|deprecate|dist-tag\s+(add|rm))\b|\bcargo\s+publish\b|\btwine\s+upload\b|\b(docker|podman)\s+push\b|\bgem\s+push\b`,
+    match: String.raw`${cmd('npm|pnpm|yarn|bun')}\s+(publish|unpublish|deprecate|dist-tag\s+(add|rm))\b|${cmd('cargo')}\s+publish\b|${cmd('twine')}\s+upload\b|${cmd('docker|podman')}\s+push\b|${cmd('gem')}\s+push\b`,
   },
   {
     label: 'change cloud infrastructure',
     tool: '^Bash$',
-    match: String.raw`\b(terraform|tofu)\s+(apply|destroy|import|state\s+(rm|mv))\b|\bkubectl\b${ARGS}\b(apply|delete|replace|scale|rollout|patch|edit|drain|cordon|create)\b|\bhelm\s+(install|upgrade|uninstall|rollback)\b|\baws\s+\S+\s+(delete|terminate|put|update|create|rm|sync)\S*|\bgcloud\b${ARGS}\b(deploy|delete|update|create)\b|\baz\b${ARGS}\b(delete|create|update|deploy)\b`,
+    match: String.raw`${cmd('terraform|tofu')}\s+(apply|destroy|import|state\s+(rm|mv))\b|${cmd('kubectl')}${ARGS}\b(apply|delete|replace|scale|rollout|patch|edit|drain|cordon|create)\b|${cmd('helm')}\s+(install|upgrade|uninstall|rollback)\b|${cmd('aws')}\s+\S+\s+(delete|terminate|put|update|create|rm|sync)\S*|${cmd('gcloud')}${ARGS}\b(deploy|delete|update|create)\b|${cmd('az')}${ARGS}\b(delete|create|update|deploy)\b`,
   },
   {
     label: 'connect to a database directly',
@@ -51,11 +68,11 @@ export const DEFAULT_RULES = [
   {
     label: 'run as root or delete outside the worktree',
     tool: '^Bash$',
-    match: String.raw`\bsudo\b|\brm\b${ARGS}(\s-[a-zA-Z]*[rR][a-zA-Z]*|\s--recursive)\b${ARGS}\s("|')?(\/|~|\$HOME|\.\.)`,
+    match: String.raw`(?:^|[;&|(\n]\s*)sudo\b|${cmd('rm')}${ARGS}(\s-[a-zA-Z]*[rR][a-zA-Z]*|\s--recursive)\b${ARGS}\s("|')?(\/|~|\$HOME|\.\.)`,
   },
   {
     label: 'a connector action that changes something',
-    tool: String.raw`^mcp__.*(apply_migration|execute_sql|deploy|delete|drop|remove|merge|publish|create_project|pause|restore|reset|rollback|promote|update_project|create_branch|send_message|post_message|send_email|transfer|purchase|buy|pay)`,
+    tool: String.raw`^mcp__.*(apply_migration|execute_sql|deploy|delete|drop|remove|merge|publish|create_project|pause|restore|reset|rollback|promote|update_project|create_branch|send_message|post_message|send_email|reply|forward|trash|share|invite|schedule_message|transfer|purchase|buy|pay)`,
     match: null,
   },
 ];

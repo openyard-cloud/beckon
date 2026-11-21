@@ -14,6 +14,7 @@ Usage:
   beckon doctor               check node, claude, git, the config and the Slack tokens
   beckon start                run in the foreground
   beckon service install      run in the background and on login (launchd or systemd)
+  beckon service restart      restart after running tasks finish
   beckon service uninstall
   beckon service status
 
@@ -64,13 +65,25 @@ Next:
       const service = await import('../src/service.mjs');
       if (sub === 'install') {
         const paths = homePaths(beckonHome());
+        let grace = 30;
+        try {
+          const { loadConfig } = await import('../src/config.mjs');
+          grace = loadConfig(paths.config).shutdownGraceMinutes;
+        } catch {
+          /* no config yet: use the default */
+        }
         const { file, notes } = await service.installService({
           bin: fileURLToPath(import.meta.url),
           logsDir: paths.logs,
           caffeinate: !rest.includes('--no-caffeinate'),
+          stopSeconds: grace * 60 + 60,
         });
         console.log(`Wrote ${file}`);
         for (const n of notes) console.log(n);
+      } else if (sub === 'restart') {
+        console.log('Restarting. Running tasks get to finish first (shutdownGraceMinutes).');
+        await service.restartService();
+        console.log('Restarted.');
       } else if (sub === 'uninstall') {
         const { file } = await service.uninstallService();
         console.log(`Stopped and removed ${file}`);

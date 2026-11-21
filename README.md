@@ -1,4 +1,8 @@
+<p align="center"><img src="assets/logo.svg" width="128" alt="beckon logo: a lowercase b whose bowl is a chat bubble shaped like a robot head"></p>
+
 # beckon
+
+<p align="center"><img src="assets/hero.webp" alt="beckon in a Slack channel: a task, the live plan of steps, a one-line summary, and an Allow button before a production deploy"></p>
 
 Run Claude Code from Slack, on your own machine, with your own Claude subscription.
 
@@ -73,6 +77,8 @@ Mention `@beckon` with a task. It starts Claude Code in a fresh git worktree of 
 | Mention `@beckon status` | Lists what is running and queued |
 
 Each task runs in its own worktree under `~/.beckon/worktrees`, created from the latest remote copy of the base branch on a detached HEAD. Claude creates a branch with your repository's naming conventions, so several tasks on one repository never collide. A worktree that has been idle for `keepDays` is removed, but only if that loses nothing: uncommitted changes and commits that are not on any branch keep it alive.
+
+Claude closes the browser tabs it opened before it finishes. Tabs opened with Claude in Chrome are tracked, and a run that tries to end with some still open is sent back to close them (twice at most).
 
 ## Approvals
 

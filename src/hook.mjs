@@ -1,3 +1,5 @@
+import { request } from 'node:http';
+
 // The hook Claude Code runs before each tool use (PreToolUse) and whenever it would show a
 // permission prompt (PermissionRequest). It asks the beckon daemon what to do. If the daemon
 // cannot be reached the answer is "deny": an unanswered approval must never turn into a yes.
@@ -21,10 +23,36 @@ export function hookOutput(kind, answer) {
     if (behavior === 'deny') out.message = message;
     return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: out } });
   }
+  if (kind === 'stop') {
+    if (decision !== 'block') return '';
+    return JSON.stringify({ decision: 'block', reason: answer.message });
+  }
   return '';
 }
 
-export async function runHook(kind, stdinText, env = process.env, fetchImpl = globalThis.fetch) {
+// node:http rather than fetch: fetch gives up on a response after 5 minutes, and an approval
+// can take much longer than that to be answered.
+export function postJson(url, token, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = request(url, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) },
+    }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`));
+        try { resolve(JSON.parse(text)); } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.end(data);
+  });
+}
+
+export async function runHook(kind, stdinText, env = process.env, post = postJson) {
   const url = env.BECKON_HOOK_URL;
   const token = env.BECKON_HOOK_TOKEN;
   const thread = env.BECKON_THREAD;
@@ -34,18 +62,15 @@ export async function runHook(kind, stdinText, env = process.env, fetchImpl = gl
   try {
     payload = JSON.parse(stdinText);
   } catch {
+    if (kind === 'stop') return '';
     return hookOutput(kind, { decision: 'deny', message: 'beckon could not read the hook input.' });
   }
 
   try {
-    const res = await fetchImpl(url, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ kind, thread, payload }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return hookOutput(kind, await res.json());
+    return hookOutput(kind, await post(url, token, { kind, thread, payload }));
   } catch (e) {
+    // The Stop hook only asks for tidying up, so an unreachable daemon lets the run finish.
+    if (kind === 'stop') return '';
     if (kind === 'pre') {
       return hookOutput(kind, { decision: 'deny', message: `beckon is not reachable (${e.message}), so nothing runs without approval.` });
     }

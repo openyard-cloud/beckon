@@ -10,6 +10,21 @@ test('formats PreToolUse and PermissionRequest answers', () => {
   assert.deepEqual(deny, { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'no' });
   assert.deepEqual(JSON.parse(hookOutput('permission', { decision: 'allow' })).hookSpecificOutput.decision, { behavior: 'allow' });
   assert.equal(JSON.parse(hookOutput('permission', { decision: 'none' })).hookSpecificOutput.decision.behavior, 'deny');
+  assert.equal(hookOutput('stop', { decision: 'none' }), '');
+  assert.deepEqual(JSON.parse(hookOutput('stop', { decision: 'block', message: 'close tabs' })), { decision: 'block', reason: 'close tabs' });
+});
+
+test('an unreachable daemon lets the run finish instead of blocking Stop', async () => {
+  const env = { BECKON_HOOK_URL: 'http://127.0.0.1:9/', BECKON_HOOK_TOKEN: 't', BECKON_THREAD: 'C1:1.2' };
+  assert.equal(await runHook('stop', '{}', env), '');
+});
+
+test('waits for slow answers instead of timing out', async () => {
+  const server = await startHookServer(() => new Promise((r) => setTimeout(() => r({ decision: 'allow' }), 1500)));
+  const env = { BECKON_HOOK_URL: server.url, BECKON_HOOK_TOKEN: server.token, BECKON_THREAD: 'C1:1.2' };
+  const out = JSON.parse(await runHook('pre', JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'x' } }), env));
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'allow');
+  await server.close();
 });
 
 test('does nothing outside beckon', async () => {

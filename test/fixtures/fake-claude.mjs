@@ -3,7 +3,9 @@
 // hooks it was given with --settings, so the approval path is exercised end to end.
 //   RUN:<command>   try a Bash command through the PreToolUse hook
 //   PERM:<command>  try a Bash command that needs permission (PermissionRequest hook)
+//   SLOW            finish after 0.7 seconds
 //   SLEEP           wait until killed
+//   TABS            open a browser tab, then close it only when the Stop hook asks
 //   anything else   reply "echo: <prompt>"
 import { execSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
@@ -59,6 +61,25 @@ if (run || perm) {
     }
   }
   emit({ type: 'result', subtype: 'success', is_error: false, result: verdict === 'ran' ? `ran ${command}` : `denied: ${reason}`, num_turns: 2 });
+} else if (prompt.includes('TABS')) {
+  const tool = (id, name, input, text) => {
+    emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
+    emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text }] }] } });
+  };
+  tool('t1', 'mcp__claude-in-chrome__tabs_context_mcp', { createIfEmpty: true }, '{"availableTabs":[{"tabId":111,"title":"New Tab","url":"chrome://newtab/"}],"tabGroupId":9}');
+  const reminders = [];
+  for (let i = 0; i < 3; i++) {
+    const stop = runHook('Stop', { stop_hook_active: i > 0 });
+    if (stop?.decision !== 'block') break;
+    reminders.push(stop.reason);
+    if (prompt.includes('STUBBORN')) continue;
+    tool(`c${i}`, 'mcp__claude-in-chrome__tabs_close_mcp', { tabId: 111 }, 'Closed tab 111. Group is now empty (auto-removed).');
+  }
+  emit({ type: 'result', subtype: 'success', is_error: false, result: `reminded ${reminders.length}: ${reminders.join(' | ')}`, num_turns: 2 });
+} else if (prompt.includes('SLOW')) {
+  emit({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'sleep 1' } }] } });
+  await new Promise((r) => setTimeout(r, 700));
+  emit({ type: 'result', subtype: 'success', is_error: false, result: 'slow done', num_turns: 2 });
 } else if (prompt.includes('SLEEP')) {
   emit({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'sleep 100' } }] } });
   setInterval(() => {}, 1000);

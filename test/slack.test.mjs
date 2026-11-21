@@ -35,6 +35,14 @@ test('acknowledges every envelope and emits events and button clicks', async () 
   client.stop();
 });
 
+test('sends form-encoded bodies, with objects as JSON strings', async () => {
+  const { formEncode } = await import('../src/slack.mjs');
+  const params = new URLSearchParams(formEncode({ channel: 'C1', ts: '1.2', blocks: [{ type: 'x' }], skip: undefined }));
+  assert.equal(params.get('channel'), 'C1');
+  assert.deepEqual(JSON.parse(params.get('blocks')), [{ type: 'x' }]);
+  assert.equal(params.has('skip'), false);
+});
+
 test('Web API errors name the method and Slack error code', async () => {
   const api = new SlackApi('xoxb-1', { fetchImpl: okFetch({ ok: false, error: 'channel_not_found' }) });
   await assert.rejects(api.call('chat.postMessage', {}), /chat\.postMessage failed: channel_not_found/);
