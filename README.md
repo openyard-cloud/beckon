@@ -2,6 +2,8 @@
 
 # beckon
 
+<p align="center"><img src="assets/hero.webp" alt="beckon in a Slack channel: a task, the live plan of steps, a one-line summary, and an Allow button before a production deploy"></p>
+
 Run Claude Code from Slack, on your own machine, with your own Claude subscription.
 
 Mention `@beckon` with a task. It starts Claude Code in a fresh git worktree of the right repository, shows its steps live in the thread, and posts the answer there. Reply in the thread to keep going. When Claude wants to deploy, push to `main`, merge, run a migration or publish, the command waits in Slack for you to press **Allow** or **Deny**.
