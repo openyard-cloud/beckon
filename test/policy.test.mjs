@@ -52,6 +52,9 @@ test('asks before connector actions that change something', () => {
   assert.ok(matchRule('mcp__slack__send_message', {}));
   assert.ok(matchRule('mcp__claude_ai_Gmail__reply', {}));
   assert.ok(matchRule('mcp__claude_ai_Google_Drive__share_file', {}));
+  assert.equal(matchRule('mcp__peekaboo__click', { confirm: 'Submit for Review', on: 'B12' })?.label, 'click a consequential button on screen');
+  assert.equal(matchRule('mcp__peekaboo__action', { on: 'B3', action: 'AXPress', confirm: 'Upload' })?.label, 'click a consequential button on screen');
+  assert.equal(matchRule('mcp__peekaboo__click', { on: 'B12' }), null, 'clicks the guard lets through run without asking');
   assert.equal(matchRule('mcp__claude_ai_Gmail__search_threads', {}), null);
   assert.equal(matchRule('mcp__supabase__list_tables', {}), null);
   assert.equal(matchRule('Read', { file_path: '/etc/passwd' }), null);

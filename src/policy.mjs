@@ -75,6 +75,14 @@ export const DEFAULT_RULES = [
     tool: String.raw`^mcp__.*(apply_migration|execute_sql|deploy|delete|drop|remove|merge|publish|create_project|pause|restore|reset|rollback|promote|update_project|create_branch|send_message|post_message|send_email|reply|forward|trash|share|invite|schedule_message|transfer|purchase|buy|pay)`,
     match: null,
   },
+  {
+    // Screen control through Peekaboo (openyard-cloud/Peekaboo): its guard refuses clicks on
+    // consequential buttons (Submit, Upload, Distribute, Release, Delete, ...) until they are
+    // repeated with confirm set to the button's label. That repeat is what asks here.
+    label: 'click a consequential button on screen',
+    tool: String.raw`^mcp__.*peekaboo.*__(click|action)$`,
+    match: String.raw`"confirm"\s*:`,
+  },
 ];
 
 function compile(rules) {

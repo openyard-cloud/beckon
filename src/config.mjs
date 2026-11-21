@@ -111,7 +111,7 @@ export function validateConfig(raw) {
           errors.push(`${where}: a regex string or { "tool", "match", "label" }`);
         }
       }
-      for (const key of ['baseBranch', 'model', 'setup', 'instructions']) {
+      for (const key of ['baseBranch', 'model', 'setup', 'instructions', 'mcpConfig']) {
         if (p[key] !== undefined && typeof p[key] !== 'string') errors.push(`${at}.${key}: must be a string`);
       }
       projects[name] = {
@@ -124,6 +124,7 @@ export function validateConfig(raw) {
         alwaysAsk: rules,
         setup: p.setup ?? null,
         instructions: p.instructions ?? null,
+        mcpConfig: typeof p.mcpConfig === 'string' ? expandHome(p.mcpConfig) : null,
       };
     }
   }

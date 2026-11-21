@@ -15,7 +15,7 @@ export function hookSettings({ nodePath, hookScript, timeoutSeconds }) {
   };
 }
 
-export function claudeArgs({ sessionId, resume, model, permissionMode, settings, appendPrompt, name }) {
+export function claudeArgs({ sessionId, resume, model, permissionMode, settings, appendPrompt, name, mcpConfig }) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   if (resume) args.push('--resume', sessionId);
   else {
@@ -26,6 +26,8 @@ export function claudeArgs({ sessionId, resume, model, permissionMode, settings,
   if (permissionMode) args.push('--permission-mode', permissionMode);
   args.push('--disallowedTools', 'AskUserQuestion');
   if (settings) args.push('--settings', JSON.stringify(settings));
+  // Extra MCP servers for this project's runs only, such as screen control, on top of the user's own.
+  if (mcpConfig) args.push('--mcp-config', mcpConfig);
   if (appendPrompt) args.push('--append-system-prompt', appendPrompt);
   return args;
 }
