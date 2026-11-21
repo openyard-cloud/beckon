@@ -2,6 +2,17 @@ import { EventEmitter } from 'node:events';
 
 const API = 'https://slack.com/api/';
 
+// Some read methods (conversations.replies, conversations.list) reject JSON bodies; form
+// encoding works everywhere, with objects and arrays sent as JSON strings.
+export function formEncode(body) {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(body ?? {})) {
+    if (v === undefined || v === null) continue;
+    params.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+  }
+  return params.toString();
+}
+
 export class SlackError extends Error {
   constructor(method, code, detail) {
     super(`Slack ${method} failed: ${code}${detail ? ` (${detail})` : ''}`);
@@ -21,9 +32,9 @@ export class SlackApi {
       method: 'POST',
       headers: {
         authorization: `Bearer ${this.token}`,
-        'content-type': 'application/json; charset=utf-8',
+        'content-type': 'application/x-www-form-urlencoded; charset=utf-8',
       },
-      body: JSON.stringify(body),
+      body: formEncode(body),
     });
     if (res.status === 429 && attempt < 5) {
       const wait = Number(res.headers.get('retry-after') ?? 1);
@@ -52,7 +63,7 @@ export class SocketClient extends EventEmitter {
     fetchImpl = globalThis.fetch,
     WebSocketImpl = globalThis.WebSocket,
     log = () => {},
-    staleMs = 5 * 60 * 1000,
+    staleMs = 60 * 60 * 1000,
   } = {}) {
     super();
     this.api = new SlackApi(appToken, { fetchImpl });

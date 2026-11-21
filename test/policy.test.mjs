@@ -71,6 +71,17 @@ test('asks before releasing an app or pushing a patch to users', () => {
   }
 });
 
+test('does not ask when a risky name only appears in a path, a pattern or a message', () => {
+  for (const c of [
+    'tail -8 ~/Library/Application\\ Support/shorebird/logs/x.log | grep patch',
+    'grep -rn "vercel --prod" docs',
+    'git commit -m "push to main"',
+    'cat wrangler.toml',
+    'ls ~/.fly/deploy',
+  ]) assert.equal(bash(c), null, c);
+  for (const c of ['NODE_ENV=production npx vercel --prod', 'echo $(vercel --prod)', 'git -C ../app push origin main']) assert.ok(bash(c), c);
+});
+
 test('project rules add to the defaults', () => {
   const extra = [{ tool: '^Bash$', match: 'playwright test', label: 'tests hit production' }];
   assert.deepEqual(bash('pnpm exec playwright test', extra), { label: 'tests hit production' });

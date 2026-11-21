@@ -12,6 +12,14 @@ test('formats PreToolUse and PermissionRequest answers', () => {
   assert.equal(JSON.parse(hookOutput('permission', { decision: 'none' })).hookSpecificOutput.decision.behavior, 'deny');
 });
 
+test('waits for slow answers instead of timing out', async () => {
+  const server = await startHookServer(() => new Promise((r) => setTimeout(() => r({ decision: 'allow' }), 1500)));
+  const env = { BECKON_HOOK_URL: server.url, BECKON_HOOK_TOKEN: server.token, BECKON_THREAD: 'C1:1.2' };
+  const out = JSON.parse(await runHook('pre', JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'x' } }), env));
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'allow');
+  await server.close();
+});
+
 test('does nothing outside beckon', async () => {
   assert.equal(await runHook('pre', '{}', {}), '');
 });
