@@ -72,7 +72,7 @@ export const DEFAULT_RULES = [
   },
   {
     label: 'a connector action that changes something',
-    tool: String.raw`^mcp__.*(apply_migration|execute_sql|deploy|delete|drop|remove|merge|publish|create_project|pause|restore|reset|rollback|promote|update_project|create_branch|send_message|post_message|send_email|transfer|purchase|buy|pay)`,
+    tool: String.raw`^mcp__.*(apply_migration|execute_sql|deploy|delete|drop|remove|merge|publish|create_project|pause|restore|reset|rollback|promote|update_project|create_branch|send_message|post_message|send_email|reply|forward|trash|share|invite|schedule_message|transfer|purchase|buy|pay)`,
     match: null,
   },
 ];

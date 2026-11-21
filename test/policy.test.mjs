@@ -50,6 +50,9 @@ test('asks before connector actions that change something', () => {
   assert.ok(matchRule('mcp__supabase__apply_migration', { name: 'x' }));
   assert.ok(matchRule('mcp__claude_ai_Vercel__deploy_to_vercel', {}));
   assert.ok(matchRule('mcp__slack__send_message', {}));
+  assert.ok(matchRule('mcp__claude_ai_Gmail__reply', {}));
+  assert.ok(matchRule('mcp__claude_ai_Google_Drive__share_file', {}));
+  assert.equal(matchRule('mcp__claude_ai_Gmail__search_threads', {}), null);
   assert.equal(matchRule('mcp__supabase__list_tables', {}), null);
   assert.equal(matchRule('Read', { file_path: '/etc/passwd' }), null);
 });
