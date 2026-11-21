@@ -1,7 +1,11 @@
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, watch } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, readFileSync, watch, existsSync } from 'node:fs';
 import { dirname, basename } from 'node:path';
+import { SecretBroker, runJson, peekabooTypist } from './secrets.mjs';
+import { RelayClient } from './relay.mjs';
+import { PasskeyStore } from './passkeys.mjs';
+import { join } from 'node:path';
 import { beckonHome, homePaths, loadEnvFile, loadConfig, validateConfig } from './config.mjs';
 import { SlackApi, SocketClient } from './slack.mjs';
 import { StateStore } from './state.mjs';
@@ -25,6 +29,8 @@ export async function start(env = process.env) {
     spawn('/usr/bin/caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref();
   }
 
+  const secretSetup = startSecrets(config.secretRelay, env, paths.home);
+
   const slack = new SlackApi(botToken);
   const state = new StateStore(paths.state);
   const beckon = new Beckon({
@@ -36,6 +42,8 @@ export async function start(env = process.env) {
     env,
     log,
     configFile: paths.config,
+    secrets: secretSetup?.broker ?? null,
+    secretScript: fileURLToPath(new URL('../bin/beckon-secret.mjs', import.meta.url)),
   });
   beckon.configText = readFileSync(paths.config, 'utf8');
   const hook = await startHookServer((body) => beckon.onHook(body), { log });
@@ -63,6 +71,8 @@ export async function start(env = process.env) {
     stopping = true;
     log(`Got ${signal}, finishing running tasks before stopping`);
     await beckon.shutdownGracefully(beckon.config.shutdownGraceMinutes * 60_000);
+    secretSetup?.broker.cancelAll('beckon is shutting down');
+    secretSetup?.relay.stop();
     socket.stop();
     await hook.close();
     process.exit(0);
@@ -108,4 +118,42 @@ export function watchConfig(file, beckon, { debounceMs = 500 } = {}) {
   });
   watcher.unref?.();
   return watcher;
+}
+
+// The secret handoff. Needs the relay (relay/, deployed to Cloudflare) and its token, the
+// beckon-ax helper (compiled from helpers/ax-focus.swift on first use) and the openyard Peekaboo
+// build with `type --secret-stdin`.
+function startSecrets(settings, env, home) {
+  if (!settings) return null;
+  const token = env.BECKON_RELAY_TOKEN;
+  if (!token || token.length < 32) {
+    log('Secret handoff is off: BECKON_RELAY_TOKEN is missing from ~/.beckon/env');
+    return null;
+  }
+  if (!existsSync(settings.axHelperPath)) {
+    const source = fileURLToPath(new URL('../helpers/ax-focus.swift', import.meta.url));
+    mkdirSync(dirname(settings.axHelperPath), { recursive: true });
+    const built = spawnSync('swiftc', ['-O', '-o', settings.axHelperPath, source], { encoding: 'utf8' });
+    if (built.status !== 0) {
+      log(`Secret handoff is off: could not build ${settings.axHelperPath} (${(built.stderr || built.error?.message || '').trim().split('\n').pop()})`);
+      return null;
+    }
+  }
+  if (!existsSync(settings.peekabooPath)) {
+    log(`Secret handoff is off: ${settings.peekabooPath} is missing (build openyard-cloud/Peekaboo)`);
+    return null;
+  }
+  const relay = new RelayClient({ url: settings.url, token, log });
+  const broker = new SecretBroker({
+    relayUrl: settings.url,
+    relay,
+    passkeys: new PasskeyStore(join(home, 'passkeys.json')),
+    ttlMs: settings.ttlMinutes * 60_000,
+    readFocus: (app) => runJson(settings.axHelperPath, [app]),
+    typeSecret: peekabooTypist(settings.peekabooPath),
+    log,
+  });
+  relay.once('ready', () => log(`Connected to the secret relay ${settings.url}`));
+  relay.start();
+  return { broker, relay };
 }

@@ -172,8 +172,34 @@ export function validateConfig(raw) {
     shutdownGraceMinutes: num('shutdownGraceMinutes', 30, 0, 240),
     claudePath: typeof raw.claudePath === 'string' ? expandHome(raw.claudePath) : 'claude',
     allowApiKey: raw.allowApiKey === true,
+    secretRelay: secretRelayConfig(raw.secretRelay, errors),
   };
   return { config, errors };
+}
+
+// Secret handoff (src/secrets.mjs) through your own relay on Cloudflare (relay/). Off unless
+// configured. The relay token is BECKON_RELAY_TOKEN in ~/.beckon/env.
+function secretRelayConfig(raw, errors) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'object') {
+    errors.push('secretRelay: an object like { "url": "https://beckon-relay.you.workers.dev" }');
+    return null;
+  }
+  let url = null;
+  try {
+    url = new URL(raw.url);
+  } catch {
+    errors.push('secretRelay.url: the https address of your deployed relay (relay/)');
+  }
+  if (url && url.protocol !== 'https:') errors.push('secretRelay.url: must be https');
+  const ttl = raw.ttlMinutes ?? 5;
+  if (typeof ttl !== 'number' || ttl < 1 || ttl > 30) errors.push('secretRelay.ttlMinutes: 1 to 30');
+  return {
+    url: url ? url.origin : null,
+    ttlMinutes: ttl,
+    peekabooPath: expandHome(raw.peekabooPath ?? '~/.beckon/bin/peekaboo'),
+    axHelperPath: expandHome(raw.axHelperPath ?? '~/.beckon/bin/beckon-ax'),
+  };
 }
 
 export function loadConfig(file) {

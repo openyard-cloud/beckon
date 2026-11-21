@@ -7,9 +7,13 @@ import { Beckon } from '../src/daemon.mjs';
 import { validateConfig } from '../src/config.mjs';
 import { StateStore } from '../src/state.mjs';
 import { startHookServer } from '../src/hookserver.mjs';
+import { SecretBroker } from '../src/secrets.mjs';
+import { PasskeyStore } from '../src/passkeys.mjs';
+import { makeAuthenticator, registration, submission } from './phone.mjs';
+import { fileURLToPath } from 'node:url';
 import { FakeSlack, FAKE_CLAUDE, HOOK_SCRIPT, tempDir, waitFor } from './helpers.mjs';
 
-async function setup({ config: extra = {}, env: extraEnv = {}, withFile = false } = {}) {
+async function setup({ config: extra = {}, env: extraEnv = {}, withFile = false, beckonOptions = {} } = {}) {
   const home = tempDir();
   const raw = {
     users: ['U1'],
@@ -43,6 +47,7 @@ async function setup({ config: extra = {}, env: extraEnv = {}, withFile = false 
     },
     removeWorktree: async () => ({ removed: true }),
     configFile,
+    ...beckonOptions,
   });
   const hook = await startHookServer((body) => beckon.onHook(body));
   await beckon.start({ hook, background: false });
@@ -428,5 +433,59 @@ test('a reply in a thread whose project was removed says so', async () => {
   await beckon.handleEvent(mention('remove project other'));
   await beckon.handleEvent(msg({ text: 'and again', thread_ts: first.ts }));
   assert.match(lastText(slack), /no longer in beckon/);
+  await close();
+});
+
+test('a secret goes from the phone into the field, and Claude only learns the outcome', async () => {
+  const relay = { records: new Map(), handlers: {}, open(id, kind, meta) { this.records.set(id, meta); }, close() {} };
+  const typed = [];
+  const broker = new SecretBroker({
+    relayUrl: 'https://relay.example.workers.dev',
+    relay,
+    passkeys: new PasskeyStore(join(tempDir(), 'passkeys.json')),
+    readFocus: async () => ({ app: 'Google Chrome', bundleId: 'com.google.Chrome', role: 'AXTextField', subrole: 'AXSecureTextField', url: 'https://appleid.apple.com/' }),
+    typeSecret: async ({ secret }) => { typed.push(Buffer.from(secret).toString()); },
+  });
+  const { beckon, slack, claudeRuns, done, close } = await setup({
+    beckonOptions: { secrets: broker, secretScript: fileURLToPath(new URL('../bin/beckon-secret.mjs', import.meta.url)) },
+  });
+
+  // Without a passkey, Claude is told to stop and the thread says how to add one.
+  await beckon.handleEvent(mention('SECRET'));
+  await done();
+  assert.match(slack.texts().find((t) => t?.startsWith('secret:')), /"status":"unavailable"/);
+  assert.ok(slack.posts().some((p) => p.text === 'Passkey needed'));
+
+  // `passkey` DMs an enrollment link; the phone registers.
+  await beckon.handleEvent(msg({ channel: 'D1', channel_type: 'im', text: 'passkey' }));
+  const enrollDm = slack.posts().find((p) => p.channel === 'U1' && p.text === 'Add a passkey for beckon');
+  const enrollUrl = enrollDm.blocks[1].elements[0].url;
+  const enrollId = new URL(enrollUrl).pathname.split('/')[2];
+  const auth = makeAuthenticator();
+  assert.equal((await relay.handlers.enrolled(enrollId, registration(auth, { challenge: relay.records.get(enrollId).challenge, origin: 'https://relay.example.workers.dev' }))).status, 'enrolled');
+
+  await beckon.handleEvent(mention('SECRET again'));
+  const dm = await waitFor(() => slack.posts().find((p) => p.channel === 'U1' && p.text?.startsWith('Enter Apple ID password')));
+  const link = dm.blocks.find((b) => b.type === 'actions').elements.find((e) => e.action_id === 'beckon_secret_open').url;
+  const notice = slack.posts().filter((p) => p.text?.startsWith('Secret needed')).at(-1);
+  assert.ok(notice && !JSON.stringify(notice).includes(new URL(link).hash), 'the thread does not get the link');
+  assert.match(claudeRuns().at(-1).argv[claudeRuns().at(-1).argv.indexOf('--append-system-prompt') + 1], /beckon-secret\.mjs/);
+
+  const id = new URL(link).pathname.split('/')[2];
+  const body = await submission({ url: link, meta: relay.records.get(id), secret: 's3cret', authenticator: auth });
+  assert.equal((await relay.handlers.submit(id, body)).status, 'filled');
+  await done();
+  assert.deepEqual(typed, ['s3cret']);
+  assert.match(slack.texts().filter((t) => t?.startsWith('secret:')).at(-1), /"status":"filled"/);
+  assert.ok(!slack.calls.some((c) => JSON.stringify(c.body).includes('s3cret')), 'the value never reaches Slack');
+  assert.ok(slack.find('chat.update').some((c) => /filled in/.test(JSON.stringify(c.body.blocks))));
+  await close();
+});
+
+test('without secret handoff set up, Claude is told to ask for a manual sign-in', async () => {
+  const { beckon, slack, done, close } = await setup();
+  await beckon.handleEvent(mention('SECRET'));
+  await done();
+  assert.match(slack.texts().find((t) => t?.startsWith('secret:')), /"status":"unavailable"/);
   await close();
 });

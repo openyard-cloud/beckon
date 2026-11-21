@@ -9,6 +9,8 @@
   "files": [
     "bin",
     "src",
+    "helpers",
+    "relay",
     "slack-app-manifest.json",
     "README.md",
     "LICENSE"
