@@ -89,9 +89,12 @@ test('a mention starts a thread, a reply resumes the same session', async () => 
   assert.equal(run2.cwd, run1.cwd);
   assert.ok(slack.texts().includes('echo: and again'));
 
-  const progress = slack.find('chat.update').at(-1).body;
-  assert.match(progress.blocks[0].text.text, /Done in/);
-  assert.equal(progress.blocks.length, 1, 'the Stop button is gone when the run ends');
+  const final = slack.posts().at(-1);
+  assert.equal(final.blocks[0].type, 'plan');
+  assert.match(final.blocks[0].title, /^Done in/);
+  assert.equal(final.text, 'echo: and again', 'the notification shows the summary line');
+  assert.ok(!final.blocks.some((b) => b.type === 'actions'), 'no Stop button once the run ends');
+  assert.equal(slack.find('chat.delete').length, 2, 'each live progress message is replaced by the final one');
   await close();
 });
 
@@ -128,11 +131,15 @@ test('a risky command waits for the button and runs after Allow', async () => {
   assert.equal(slack.find('chat.postEphemeral').length, 1);
   assert.equal(beckon.approvals.size, 1, 'a stranger cannot approve');
 
+  const askTs = slack.posts().indexOf(ask);
   await beckon.handleInteractive(click('beckon_allow', approvalId(slack)));
   await done();
   assert.ok(slack.texts().includes('ran npx vercel --prod'));
-  const updated = slack.find('chat.update', (b) => b.text?.includes('Allowed by <@U1>'));
-  assert.equal(updated.length, 1);
+  assert.ok(slack.find('chat.delete').some((c) => c.body.ts === `1700000000.${String(askTs + 1).padStart(6, '0')}`), 'the approval question is removed once answered');
+  const plan = slack.posts().at(-1).blocks[0];
+  const step = plan.tasks.find((x) => x.title.startsWith('Approval: deploy'));
+  assert.equal(step.status, 'complete');
+  assert.match(step.output.elements[0].elements[0].text, /allowed in Slack/);
   await close();
 });
 
@@ -260,7 +267,7 @@ test('runs at most maxParallel turns and queues the rest', async () => {
   await beckon.handleEvent(a);
   await beckon.handleEvent(mention('second task'));
   assert.equal(beckon.waiting.length, 1);
-  assert.ok(slack.posts().some((p) => p.text?.startsWith('Queued:')));
+  assert.ok(slack.find('reactions.add').some((c) => c.body.name === 'hourglass_flowing_sand'), 'a queued task gets an hourglass, not a message');
   await new Promise((r) => setTimeout(r, 300));
   await beckon.handleEvent(msg({ text: 'stop', thread_ts: a.ts }));
   await done();
@@ -288,8 +295,9 @@ test('a restart lets running work finish and turns new work away', async () => {
   const { beckon, slack, claudeRuns, close } = await setup();
   await beckon.handleEvent(mention('SLOW'));
   await waitFor(() => claudeRuns().length === 1);
+  const run = await waitFor(() => [...beckon.running.values()][0]);
   const stopping = beckon.shutdownGracefully(10_000);
-  await waitFor(() => slack.texts().some((t) => t?.startsWith('beckon is restarting. It will let this run finish')));
+  assert.match(run.progress.title(Date.now(), 'working'), /beckon restarts after this run/);
   await beckon.handleEvent(mention('new work'));
   await stopping;
   assert.ok(slack.texts().includes('slow done'), 'the running task finished');
@@ -318,4 +326,11 @@ test('status lists running work', async () => {
   await beckon.handleEvent(msg({ text: 'stop', thread_ts: a.ts }));
   await done();
   await close();
+});
+
+test('the summary line is the notification text and bold at the top of the answer', async () => {
+  const { emphasizeSummary } = await import('../src/daemon.mjs');
+  assert.equal(emphasizeSummary('Pushed the fix.\n\nDetails.'), '**Pushed the fix.**\n\nDetails.');
+  assert.equal(emphasizeSummary('# Heading\ntext'), '# Heading\ntext');
+  assert.equal(emphasizeSummary('- a list'), '- a list');
 });

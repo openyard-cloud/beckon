@@ -33,7 +33,7 @@ export class FakeSlack {
   }
 
   texts() {
-    return this.posts().map((b) => b.blocks?.find((x) => x.type === 'markdown')?.text ?? b.text);
+    return this.posts().map((b) => (b.blocks?.find((x) => x.type === 'markdown')?.text ?? b.text)?.replace(/^\*\*(.*?)\*\*/, '$1'));
   }
 
   find(method, pred = () => true) {

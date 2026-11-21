@@ -14,6 +14,21 @@ const GC_MS = 6 * 60 * 60 * 1000;
 const STOP_WORDS = /^(stop|cancel|abort)[.!]*$/i;
 const PROJECT_PREFIX = /^([a-z0-9][a-z0-9._-]*):\s*/i;
 
+function firstLine(text) {
+  return String(text).split('\n').find((l) => l.trim()) ?? '';
+}
+
+// Bold the opening summary sentence so it reads as the headline of the answer.
+export function emphasizeSummary(text) {
+  const lines = String(text).split('\n');
+  const i = lines.findIndex((l) => l.trim());
+  if (i < 0) return text;
+  const line = lines[i].trim();
+  if (/^(#|\*\*|>|-|\*|\d+\.|```|\|)/.test(line)) return text;
+  lines[i] = `**${line}**`;
+  return lines.join('\n');
+}
+
 function escapeMrkdwn(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -106,9 +121,9 @@ export class Beckon {
     const runs = [...this.running.entries()];
     if (runs.length && graceMs > 0) {
       this.log(`Waiting up to ${duration(graceMs)} for ${runs.length} running task(s) before stopping`);
-      for (const [key] of runs) {
-        const t = this.state.threads[key];
-        await this.post(t.channel, t.threadTs, `beckon is restarting. It will let this run finish (up to ${duration(graceMs)}) before it stops.`).catch(() => {});
+      for (const [key, run] of runs) {
+        run.progress.note = `beckon restarts after this run (waits up to ${duration(graceMs)})`;
+        this.refresh(key);
       }
       let timer;
       await Promise.race([
@@ -230,7 +245,7 @@ export class Beckon {
       if (STOP_WORDS.test(text)) return this.stop(key, ev.user);
       if (!text) return;
       await this.react(ev.channel, ev.ts, 'eyes');
-      return this.enqueue(key, { text, user: ev.user });
+      return this.enqueue(key, { text, user: ev.user, ts: ev.ts });
     }
 
     const replyTs = ev.thread_ts ?? ev.ts;
@@ -258,7 +273,7 @@ export class Beckon {
       if (context) prompt = `${context}\n\n${body}`;
     }
     await this.react(ev.channel, ev.ts, 'eyes');
-    return this.startThread({ channel: ev.channel, threadTs: replyTs, project: projectName, text: prompt, title: body, user: ev.user });
+    return this.startThread({ channel: ev.channel, threadTs: replyTs, project: projectName, text: prompt, title: body, user: ev.user, ts: ev.ts });
   }
 
   async threadContext(channel, threadTs, beforeTs) {
@@ -311,7 +326,7 @@ export class Beckon {
 
   // ---- threads and turns ----
 
-  startThread({ channel, threadTs, project, text, title, user }) {
+  startThread({ channel, threadTs, project, text, title, user, ts }) {
     const key = `${channel}:${threadTs}`;
     const t = {
       project,
@@ -328,7 +343,7 @@ export class Beckon {
     };
     this.state.threads[key] = t;
     this.state.save();
-    return this.enqueue(key, { text, user });
+    return this.enqueue(key, { text, user, ts });
   }
 
   enqueue(key, msg) {
@@ -337,17 +352,18 @@ export class Beckon {
     this.pending.set(key, list);
     if (this.running.has(key)) {
       const t = this.state.threads[key];
-      return this.post(t.channel, t.threadTs, 'Got it. I will read this when the current step finishes.').catch(() => {});
+      if (msg.ts) return this.react(t.channel, msg.ts, 'inbox_tray');
+      return;
     }
-    return this.schedule(key);
+    return this.schedule(key, msg.ts);
   }
 
-  schedule(key) {
+  schedule(key, ts) {
     if (this.running.has(key) || this.waiting.includes(key)) return;
     if (this.running.size >= this.config.maxParallel) {
       this.waiting.push(key);
       const t = this.state.threads[key];
-      return this.post(t.channel, t.threadTs, `Queued: ${this.running.size} tasks are already running. I will start when one finishes.`).catch(() => {});
+      return this.react(t.channel, ts ?? t.threadTs, 'hourglass_flowing_sand');
     }
     this.runTurn(key).catch((e) => this.log(`Turn in ${key} failed: ${e.stack ?? e.message}`));
   }
@@ -362,7 +378,7 @@ export class Beckon {
   systemPrompt(t, project, user, ref) {
     const lines = [
       `You are working through beckon: this request came from Slack${user && user !== 'schedule' ? `, from <@${user}>` : ' on a schedule'}, and your final message is posted back to the Slack thread as markdown.`,
-      '- Keep the final message short: what you did, links to what you opened (pull requests, deploys), and anything that needs a decision.',
+      '- Start the final message with one sentence that sums up what you did or found, on its own line. Then add details only if they help: links to what you opened (pull requests, deploys) and anything that needs a decision. Keep it short.',
       '- Nobody can answer questions during a run. If you need a decision, end the turn and ask; the answer arrives as the next message.',
       `- You are in a git worktree of the "${project.name}" repository (${project.path})${ref ? `, started from ${ref} on a detached HEAD` : ''}. Create a branch before committing, following the repository's own conventions.`,
       '- Deploys, pushes to main branches, merges, migrations, publishing and similar actions are sent to the user for approval in Slack. If one is denied, do not reach the same result another way.',
@@ -383,6 +399,7 @@ export class Beckon {
       abort: new AbortController(),
       progress: new Progress({ cwd: t.worktree, startedAt: this.now() }),
       progressTs: null,
+      reply: null,
       status: 'working',
       stoppedBy: null,
       lastUpdate: 0,
@@ -406,15 +423,17 @@ export class Beckon {
           t.ref = wt.ref;
           t.worktreeRemoved = false;
           if (project.setup) {
+            const step = run.progress.addTask('setup', `Setup: ${project.setup}`);
+            this.refresh(key);
             const setup = await this.runSetup(project.setup, t.worktree);
-            if (!setup.ok) {
-              await this.postMarkdown(t.channel, t.threadTs, `The setup command \`${project.setup}\` failed; continuing anyway.\n\`\`\`\n${setup.output.slice(-1500)}\n\`\`\``);
-            }
+            step.status = setup.ok ? 'complete' : 'error';
+            if (!setup.ok) step.output = `failed, continuing anyway: ${setup.output.slice(-400)}`;
+            this.refresh(key);
           }
         }
       } catch (e) {
         run.status = 'failed';
-        await this.postMarkdown(t.channel, t.threadTs, `Could not prepare a worktree of \`${project.path}\`:\n\`\`\`\n${e.message.slice(0, 2000)}\n\`\`\``);
+        run.reply = `Could not prepare a worktree of \`${project.path}\`.\n\`\`\`\n${e.message.slice(0, 2000)}\n\`\`\``;
         return;
       }
 
@@ -429,26 +448,26 @@ export class Beckon {
       run.status = res.aborted ? 'stopped' : res.isError ? 'failed' : 'done';
       if (res.apiKeySource && res.apiKeySource !== 'none' && !this.warnedApiKey) {
         this.warnedApiKey = true;
-        await this.post(t.channel, t.threadTs, `Note: this run used ${res.apiKeySource} instead of your Claude subscription login.`).catch(() => {});
+        run.progress.addTask('api-key', `Billed through ${res.apiKeySource}, not your Claude subscription`, 'error');
       }
       if (res.aborted) {
         const who = run.stoppedBy && run.stoppedBy !== 'shutdown' ? ` by <@${run.stoppedBy}>` : run.stoppedBy === 'shutdown' ? ' because beckon shut down' : '';
-        await this.post(t.channel, t.threadTs, `Stopped${who}. Reply in this thread to continue from here.`);
+        run.reply = `Stopped${who}. Reply in this thread to continue from here.`;
       } else if (res.text) {
-        await this.postMarkdown(t.channel, t.threadTs, res.text);
+        run.reply = res.text;
       } else if (res.isError) {
         const detail = (res.spawnError ?? res.stderr ?? '').trim() || `claude exited with code ${res.exitCode}`;
-        await this.postMarkdown(t.channel, t.threadTs, `Claude stopped with an error:\n\`\`\`\n${detail.slice(-2000)}\n\`\`\``);
+        run.reply = `Claude stopped with an error.\n\`\`\`\n${detail.slice(-2000)}\n\`\`\``;
       }
     } catch (e) {
       run.status = 'failed';
       this.log(`Turn in ${key} failed: ${e.stack ?? e.message}`);
-      await this.post(t.channel, t.threadTs, `Something went wrong in beckon: ${e.message}`).catch(() => {});
+      run.reply = `Something went wrong in beckon: ${e.message}`;
     } finally {
       clearInterval(run.ticker);
       clearTimeout(run.refreshTimer);
       this.denyApprovals(key, 'The run ended.');
-      if (run.progressTs) await this.updateProgress(key, run, true).catch(() => {});
+      await this.finishRun(key, run).catch((e) => this.log(`Could not post the result in ${key}: ${e.message}`));
       this.running.delete(key);
       t.lastActive = this.now();
       this.state.save();
@@ -495,16 +514,30 @@ export class Beckon {
   }
 
   progressBlocks(key, run) {
-    const status = run.status;
-    const text = run.progress.render(this.now(), status)
-      .split('\n')
-      .map((line, i) => (i === 0 ? line : escapeMrkdwn(line)))
-      .join('\n');
-    const blocks = [section(text)];
-    if (status === 'working' || status === 'waiting') {
+    const blocks = [run.progress.planBlock(this.now(), run.status)];
+    if (run.status === 'working' || run.status === 'waiting') {
       blocks.push({ type: 'actions', elements: [button('Stop', 'beckon_stop', key, 'danger')] });
     }
     return blocks;
+  }
+
+  // The live progress message is replaced by one final message: the finished plan, a one-line
+  // summary and the answer. Posting it new (rather than editing) is what notifies the user.
+  async finishRun(key, run) {
+    const t = this.state.threads[key];
+    run.progress.finish(run.status);
+    const reply = (run.reply ?? '').trim();
+    const pieces = reply ? chunkMarkdown(emphasizeSummary(reply)) : [];
+    const summary = reply ? oneLine(firstLine(reply), 300) : run.progress.title(this.now(), run.status);
+    const blocks = [run.progress.planBlock(this.now(), run.status)];
+    if (pieces.length) blocks.push({ type: 'markdown', text: pieces[0] });
+    await this.post(t.channel, t.threadTs, summary, blocks);
+    for (const piece of pieces.slice(1)) {
+      await this.post(t.channel, t.threadTs, oneLine(piece, 300), [{ type: 'markdown', text: piece }]);
+    }
+    if (run.progressTs) {
+      await this.slack.call('chat.delete', { channel: t.channel, ts: run.progressTs }).catch(() => {});
+    }
   }
 
   refresh(key) {
@@ -585,6 +618,7 @@ export class Beckon {
     buttons.push(button('Deny', 'beckon_deny', id, 'danger'));
 
     const posted = await this.post(t.channel, t.threadTs, `Approval needed: ${label}`, [section(body), { type: 'actions', elements: buttons }]);
+    const step = run.progress.addTask(`approval-${id}`, `Approval: ${label}`, 'in_progress', oneLine(text, 200));
     run.status = 'waiting';
     this.refresh(key);
 
@@ -592,7 +626,7 @@ export class Beckon {
       const minutes = this.config.approvalTimeoutMinutes;
       const timer = setTimeout(() => this.settleApproval(id, 'deny', null, { timedOut: true }), minutes * 60_000);
       timer.unref?.();
-      this.approvals.set(id, { resolve, key, channel: t.channel, ts: posted.ts, body, timer, label });
+      this.approvals.set(id, { resolve, key, channel: t.channel, ts: posted.ts, body, timer, label, step });
     });
   }
 
@@ -612,16 +646,18 @@ export class Beckon {
       this.refresh(a.key);
     }
     let note;
-    if (timedOut) note = `:hourglass: No answer in ${this.config.approvalTimeoutMinutes} minutes, so it was denied.`;
-    else if (reason) note = `:no_entry_sign: Denied: ${reason}`;
-    else if (decision === 'allow') note = `:white_check_mark: Allowed${allowAll ? ' (and everything else in this thread)' : ''} by <@${user}>`;
-    else note = `:no_entry_sign: Denied by <@${user}>`;
-    this.slack.call('chat.update', {
-      channel: a.channel,
-      ts: a.ts,
-      text: note,
-      blocks: [section(a.body), { type: 'context', elements: [{ type: 'mrkdwn', text: note }] }],
-    }).catch((e) => this.log(`Could not update the approval message: ${e.message}`));
+    if (timedOut) note = `no answer in ${this.config.approvalTimeoutMinutes} minutes, so denied`;
+    else if (reason) note = `denied: ${reason}`;
+    else if (decision === 'allow') note = `allowed in Slack${allowAll ? ', with everything else in this thread' : ''}`;
+    else note = 'denied in Slack';
+    if (a.step) {
+      a.step.status = decision === 'allow' ? 'complete' : 'error';
+      a.step.output = note;
+      if (run) this.refresh(a.key);
+    }
+    // The question was only there to ask; the answer lives in the plan, so the thread stays short.
+    this.slack.call('chat.delete', { channel: a.channel, ts: a.ts })
+      .catch((e) => this.log(`Could not remove the approval message: ${e.message}`));
 
     if (decision === 'allow') {
       a.resolve({ decision: 'allow', message: `Approved in Slack by ${user}.` });
