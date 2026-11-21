@@ -27,9 +27,10 @@ function xml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-export function launchdPlist({ node, bin, path, home, logFile, caffeinate = true, beckonHome }) {
-  const program = caffeinate ? ['/usr/bin/caffeinate', '-i', node, bin, 'start'] : [node, bin, 'start'];
+export function launchdPlist({ node, bin, path, home, logFile, caffeinate = true, beckonHome, stopSeconds = 1860 }) {
+  const program = [node, bin, 'start'];
   const env = { PATH: path, HOME: home };
+  if (caffeinate) env.BECKON_CAFFEINATE = '1';
   if (beckonHome) env.BECKON_HOME = beckonHome;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -48,6 +49,7 @@ ${Object.entries(env).map(([k, v]) => `    <key>${k}</key><string>${xml(v)}</str
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
+  <key>ExitTimeOut</key><integer>${stopSeconds}</integer>
   <key>StandardOutPath</key><string>${xml(logFile)}</string>
   <key>StandardErrorPath</key><string>${xml(logFile)}</string>
 </dict>
@@ -55,7 +57,7 @@ ${Object.entries(env).map(([k, v]) => `    <key>${k}</key><string>${xml(v)}</str
 `;
 }
 
-export function systemdUnit({ node, bin, path, beckonHome }) {
+export function systemdUnit({ node, bin, path, beckonHome, stopSeconds = 1860 }) {
   const q = (s) => `"${String(s).replace(/(["\\])/g, '\\$1')}"`;
   const lines = [
     '[Unit]',
@@ -67,6 +69,8 @@ export function systemdUnit({ node, bin, path, beckonHome }) {
     `ExecStart=${q(node)} ${q(bin)} start`,
     'Restart=always',
     'RestartSec=10',
+    `TimeoutStopSec=${stopSeconds}`,
+    'KillMode=mixed',
     `Environment=${q(`PATH=${path}`)}`,
   ];
   if (beckonHome) lines.push(`Environment=${q(`BECKON_HOME=${beckonHome}`)}`);
@@ -79,7 +83,7 @@ export function serviceFile(platform = process.platform) {
   return join(homedir(), '.config', 'systemd', 'user', 'beckon.service');
 }
 
-export async function installService({ bin, logsDir, caffeinate = true, env = process.env, platform = process.platform }) {
+export async function installService({ bin, logsDir, caffeinate = true, stopSeconds = 1860, env = process.env, platform = process.platform }) {
   const realBin = realpathSync(bin);
   const notes = [];
   if (/[\\/]_npx[\\/]/.test(realBin)) {
@@ -93,7 +97,7 @@ export async function installService({ bin, logsDir, caffeinate = true, env = pr
 
   if (platform === 'darwin') {
     const logFile = join(logsDir, 'beckon.log');
-    writeFileSync(file, launchdPlist({ node: process.execPath, bin: realBin, path, home: homedir(), logFile, caffeinate, beckonHome }));
+    writeFileSync(file, launchdPlist({ node: process.execPath, bin: realBin, path, home: homedir(), logFile, caffeinate, beckonHome, stopSeconds }));
     const domain = `gui/${userInfo().uid}`;
     await run('launchctl', ['bootout', `${domain}/${LABEL}`]);
     const res = await run('launchctl', ['bootstrap', domain, file]);
@@ -104,7 +108,7 @@ export async function installService({ bin, logsDir, caffeinate = true, env = pr
   }
 
   if (platform === 'linux') {
-    writeFileSync(file, systemdUnit({ node: process.execPath, bin: realBin, path, beckonHome }));
+    writeFileSync(file, systemdUnit({ node: process.execPath, bin: realBin, path, beckonHome, stopSeconds }));
     for (const args of [['--user', 'daemon-reload'], ['--user', 'enable', '--now', 'beckon.service'], ['--user', 'restart', 'beckon.service']]) {
       const res = await run('systemctl', args);
       if (!res.ok) throw new Error(`systemctl ${args.join(' ')} failed: ${res.stderr.trim()}`);
@@ -142,4 +146,20 @@ export async function serviceStatus({ platform = process.platform } = {}) {
     return res.stdout.trim() || 'not installed';
   }
   return 'not supported on this platform';
+}
+
+// Restart through the service manager, which sends SIGTERM and waits for running tasks to
+// finish (up to shutdownGraceMinutes) before starting beckon again.
+export async function restartService({ platform = process.platform } = {}) {
+  if (platform === 'darwin') {
+    const res = await run('launchctl', ['kickstart', '-k', `gui/${userInfo().uid}/${LABEL}`], { timeout: 4 * 60 * 60 * 1000 });
+    if (!res.ok) throw new Error(`launchctl kickstart failed: ${res.stderr.trim()}`);
+    return;
+  }
+  if (platform === 'linux') {
+    const res = await run('systemctl', ['--user', 'restart', 'beckon.service'], { timeout: 4 * 60 * 60 * 1000 });
+    if (!res.ok) throw new Error(`systemctl restart failed: ${res.stderr.trim()}`);
+    return;
+  }
+  throw new Error(`Not supported on ${platform}`);
 }

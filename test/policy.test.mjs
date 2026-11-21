@@ -54,6 +54,23 @@ test('asks before connector actions that change something', () => {
   assert.equal(matchRule('Read', { file_path: '/etc/passwd' }), null);
 });
 
+test('asks before releasing an app or pushing a patch to users', () => {
+  for (const c of [
+    'shorebird patch ios --release-version=1.0.74+110',
+    'cd apps/mobile-player && shorebird patch android --release-version=1.0.74+111',
+    'shorebird release android --flutter-version 3.47.4',
+    'shorebird patches promote --release-version 1.0.0 --patch-number 2',
+    'bundle exec fastlane ios beta',
+    'fastlane release',
+    'xcrun altool --upload-app -f app.ipa -t ios',
+    'firebase appdistribution:distribute app.apk --app x',
+    'eas build --platform ios --auto-submit',
+  ]) assert.ok(bash(c), c);
+  for (const c of ['shorebird --version', 'shorebird doctor', 'shorebird preview', 'fastlane --version', 'fastlane lanes', 'flutter build ipa --release']) {
+    assert.equal(bash(c), null, c);
+  }
+});
+
 test('project rules add to the defaults', () => {
   const extra = [{ tool: '^Bash$', match: 'playwright test', label: 'tests hit production' }];
   assert.deepEqual(bash('pnpm exec playwright test', extra), { label: 'tests hit production' });

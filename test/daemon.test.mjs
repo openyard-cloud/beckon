@@ -284,6 +284,29 @@ test('starts a fresh session when the old one cannot be found', async () => {
   await close();
 });
 
+test('a restart lets running work finish and turns new work away', async () => {
+  const { beckon, slack, claudeRuns, close } = await setup();
+  await beckon.handleEvent(mention('SLOW'));
+  await waitFor(() => claudeRuns().length === 1);
+  const stopping = beckon.shutdownGracefully(10_000);
+  await waitFor(() => slack.texts().some((t) => t?.startsWith('beckon is restarting. It will let this run finish')));
+  await beckon.handleEvent(mention('new work'));
+  await stopping;
+  assert.ok(slack.texts().includes('slow done'), 'the running task finished');
+  assert.ok(slack.texts().includes('beckon is restarting. Send this again in a minute.'));
+  assert.equal(claudeRuns().length, 1, 'no new work started');
+  await close();
+});
+
+test('a restart stops work that outlasts the grace period', async () => {
+  const { beckon, slack, close } = await setup();
+  await beckon.handleEvent(mention('SLEEP'));
+  await new Promise((r) => setTimeout(r, 300));
+  await beckon.shutdownGracefully(300);
+  assert.ok(slack.texts().some((t) => t?.startsWith('Stopped because beckon shut down')));
+  await close();
+});
+
 test('status lists running work', async () => {
   const { beckon, slack, done, close } = await setup();
   const a = mention('SLEEP');

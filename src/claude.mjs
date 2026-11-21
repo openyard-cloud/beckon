@@ -44,7 +44,16 @@ export function childEnv(base, extra, { allowApiKey = false } = {}) {
 export function runClaude({ bin = 'claude', args, cwd, env, prompt, onEvent = () => {}, signal, spawnImpl = spawn }) {
   return new Promise((resolve) => {
     const started = Date.now();
-    const child = spawnImpl(bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Own process group: a service manager stopping beckon signals beckon's group, and the
+    // run (and the builds it started) must not die with it before beckon decides to stop it.
+    const child = spawnImpl(bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    const killGroup = (sig) => {
+      try {
+        process.kill(-child.pid, sig);
+      } catch {
+        try { child.kill(sig); } catch { /* already gone */ }
+      }
+    };
     let buffer = '';
     let stderr = '';
     let result = null;
@@ -73,8 +82,8 @@ export function runClaude({ bin = 'claude', args, cwd, env, prompt, onEvent = ()
     };
 
     const onAbort = () => {
-      child.kill('SIGTERM');
-      killTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+      killGroup('SIGTERM');
+      killTimer = setTimeout(() => killGroup('SIGKILL'), 5000);
       killTimer.unref?.();
     };
     if (signal) {

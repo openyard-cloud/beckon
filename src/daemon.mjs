@@ -71,6 +71,7 @@ export class Beckon {
     this.timers = [];
     this.crons = [];
     this.warnedApiKey = false;
+    this.draining = false;
   }
 
   async start({ hook, background = true } = {}) {
@@ -92,6 +93,31 @@ export class Beckon {
       this.gc().catch((e) => this.log(`Cleanup failed: ${e.message}`));
     }
     this.log(`Connected to Slack as <@${this.botUserId}>; projects: ${Object.keys(this.config.projects).join(', ')}`);
+  }
+
+  // Stop taking new work, let running turns finish (approvals still work), then stop whatever
+  // is left. Used when the service is restarted, so a restart does not cut a deploy in half.
+  async shutdownGracefully(graceMs) {
+    this.draining = true;
+    for (const t of this.timers) clearInterval(t);
+    this.timers = [];
+    this.waiting = [];
+    this.pending.clear();
+    const runs = [...this.running.entries()];
+    if (runs.length && graceMs > 0) {
+      this.log(`Waiting up to ${duration(graceMs)} for ${runs.length} running task(s) before stopping`);
+      for (const [key] of runs) {
+        const t = this.state.threads[key];
+        await this.post(t.channel, t.threadTs, `beckon is restarting. It will let this run finish (up to ${duration(graceMs)}) before it stops.`).catch(() => {});
+      }
+      let timer;
+      await Promise.race([
+        Promise.allSettled(runs.map(([, r]) => r.done)),
+        new Promise((r) => { timer = setTimeout(r, graceMs); timer.unref?.(); }),
+      ]);
+      clearTimeout(timer);
+    }
+    await this.stopAll();
   }
 
   async stopAll() {
@@ -194,6 +220,12 @@ export class Beckon {
     }
 
     const text = slackToPlain(ev.text, this.botUserId);
+    if (this.draining) {
+      if (!(known && STOP_WORDS.test(text))) {
+        await this.post(ev.channel, ev.thread_ts ?? ev.ts, 'beckon is restarting. Send this again in a minute.').catch(() => {});
+        return;
+      }
+    }
     if (known) {
       if (STOP_WORDS.test(text)) return this.stop(key, ev.user);
       if (!text) return;

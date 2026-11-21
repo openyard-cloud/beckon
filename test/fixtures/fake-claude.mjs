@@ -3,6 +3,7 @@
 // hooks it was given with --settings, so the approval path is exercised end to end.
 //   RUN:<command>   try a Bash command through the PreToolUse hook
 //   PERM:<command>  try a Bash command that needs permission (PermissionRequest hook)
+//   SLOW            finish after 0.7 seconds
 //   SLEEP           wait until killed
 //   anything else   reply "echo: <prompt>"
 import { execSync } from 'node:child_process';
@@ -59,6 +60,10 @@ if (run || perm) {
     }
   }
   emit({ type: 'result', subtype: 'success', is_error: false, result: verdict === 'ran' ? `ran ${command}` : `denied: ${reason}`, num_turns: 2 });
+} else if (prompt.includes('SLOW')) {
+  emit({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'sleep 1' } }] } });
+  await new Promise((r) => setTimeout(r, 700));
+  emit({ type: 'result', subtype: 'success', is_error: false, result: 'slow done', num_turns: 2 });
 } else if (prompt.includes('SLEEP')) {
   emit({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'sleep 100' } }] } });
   setInterval(() => {}, 1000);

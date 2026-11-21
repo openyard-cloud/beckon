@@ -34,6 +34,17 @@ export const DEFAULT_RULES = [
     ].join('|'),
   },
   {
+    label: 'release an app or push a patch to users',
+    tool: '^Bash$',
+    match: [
+      String.raw`\bshorebird\b${ARGS}\b(release|patch|patches\s+(promote|set-track))\b`,
+      String.raw`\bfastlane\b(?!\s+(--version|-v|lanes|list|env|actions?|search_plugins)\b)\s+\S`,
+      String.raw`\bxcrun\s+altool\b${ARGS}--upload`,
+      String.raw`\bfirebase\b${ARGS}\bappdistribution:distribute\b`,
+      String.raw`\beas\s+build\b${ARGS}--auto-submit\b`,
+    ].join('|'),
+  },
+  {
     label: 'publish a package or image',
     tool: '^Bash$',
     match: String.raw`\b(npm|pnpm|yarn|bun)\s+(publish|unpublish|deprecate|dist-tag\s+(add|rm))\b|\bcargo\s+publish\b|\btwine\s+upload\b|\b(docker|podman)\s+push\b|\bgem\s+push\b`,

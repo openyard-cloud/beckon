@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { beckonHome, homePaths, loadEnvFile, loadConfig } from './config.mjs';
 import { SlackApi, SocketClient } from './slack.mjs';
@@ -19,6 +20,9 @@ export async function start(env = process.env) {
   if (!botToken?.startsWith('xoxb-')) throw new Error(`SLACK_BOT_TOKEN (xoxb-...) is missing. Put it in ${paths.env}.`);
   if (!appToken?.startsWith('xapp-')) throw new Error(`SLACK_APP_TOKEN (xapp-...) is missing. Put it in ${paths.env}.`);
   mkdirSync(paths.worktrees, { recursive: true });
+  if (env.BECKON_CAFFEINATE === '1' && process.platform === 'darwin') {
+    spawn('/usr/bin/caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref();
+  }
 
   const slack = new SlackApi(botToken);
   const state = new StateStore(paths.state);
@@ -47,11 +51,15 @@ export async function start(env = process.env) {
 
   let stopping = false;
   const shutdown = async (signal) => {
-    if (stopping) return;
+    if (stopping) {
+      log(`Got ${signal} again, stopping now`);
+      await beckon.stopAll();
+      process.exit(0);
+    }
     stopping = true;
-    log(`Got ${signal}, stopping`);
+    log(`Got ${signal}, finishing running tasks before stopping`);
+    await beckon.shutdownGracefully(config.shutdownGraceMinutes * 60_000);
     socket.stop();
-    await beckon.stopAll();
     await hook.close();
     process.exit(0);
   };
