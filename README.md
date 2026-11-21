@@ -138,13 +138,46 @@ Two kinds of requests come to Slack:
    - Terraform, kubectl, Helm, and changes made with the AWS, Google Cloud and Azure CLIs;
    - direct database clients (`psql`, `mysql`, `mongosh`, `redis-cli`, ...);
    - `sudo`, and recursive deletes outside the worktree;
-   - MCP connector tools that deploy, migrate, delete, merge, publish or send messages.
+   - MCP connector tools that deploy, migrate, delete, merge, publish or send messages;
+   - clicks on consequential buttons on screen (Submit, Upload, Distribute, Release, Delete, ...), when screen control is set up (see below).
 
    The full list is in [`src/policy.mjs`](src/policy.mjs). Add your own per project with `alwaysAsk`.
 
 2. **Permission prompts.** These are tool uses your permission mode and allow rules do not already cover. **Allow everything in this thread** stops these prompts for the rest of that thread. Always-asked actions still ask.
 
 When a request is denied, Claude is told not to reach the same result another way. A request nobody answers within `approvalTimeoutMinutes` is denied.
+
+## Screen control (optional)
+
+Some work has no command line: a dialog in Xcode, a form in a web console. beckon can give Claude the screen through [openyard-cloud/Peekaboo](https://github.com/openyard-cloud/Peekaboo), a fork of Peekaboo with an [action guard](https://github.com/openyard-cloud/Peekaboo/blob/main/docs/openyard-guard.md):
+
+- A click on a button whose label names a consequential step (Submit, Upload, Distribute, Release, Delete, ...) is refused until Claude repeats it with `confirm` set to that label. beckon turns the repeat into an **Allow / Deny** message in Slack that shows the label.
+- Typing into password fields is refused. Sign-ins stay with you.
+- Other clicks, typing and screenshots run without asking.
+- In Chrome (Peekaboo's `browser` tool), the guard cannot read the page, so actions that can submit (click, key presses, uploads, dialogs, raw DevTools calls) ask every time. Navigating, reading and filling fields do not.
+- Peekaboo's own `agent` tool, which acts step by step out of beckon's sight, always asks.
+
+Set it up once on the beckon machine:
+
+1. Build the CLI (Xcode 26 or newer):
+
+   ```sh
+   git clone --recurse-submodules https://github.com/openyard-cloud/Peekaboo ~/Projects/peekaboo
+   cd ~/Projects/peekaboo
+   python3 scripts/setup-swift-workspace.py run -- swift build --package-path Apps/CLI -c release
+   ```
+
+2. Give the binary **Screen Recording** and **Accessibility** in *System Settings > Privacy & Security*, and check with `peekaboo permissions status`. An unsigned build is identified by its hash, so grant again after each rebuild.
+
+3. List it in an MCP config file, for example `~/.beckon/mcp-screen.json`:
+
+   ```json
+   { "mcpServers": { "peekaboo": { "command": "/Users/you/Projects/peekaboo/Apps/CLI/.build/release/peekaboo", "args": ["mcp"] } } }
+   ```
+
+4. Point the projects that should have it at the file with `"mcpConfig": "~/.beckon/mcp-screen.json"`. Only those projects' runs get screen control. Your own `claude` sessions do not.
+
+Screen control acts on the real desktop of the beckon machine. Keep it to the projects that need it, and keep that machine's sessions to what you would let the agent see. The guard does not check key presses (Return in a form can still submit it) or coordinate clicks outside Xcode and Transporter.
 
 ## Config
 
@@ -160,6 +193,7 @@ When a request is denied, Claude is told not to reach the same result another wa
       "permissionMode": "acceptEdits",    // default, acceptEdits, auto, plan, bypassPermissions, dontAsk
       "setup": "npm ci",                  // optional, runs once in each new worktree
       "instructions": "Open PRs as drafts.", // optional, added to Claude's system prompt
+      "mcpConfig": "~/.beckon/mcp-screen.json", // optional, extra MCP servers for this project's runs
       "alwaysAsk": [
         "playwright test",                // a regex on Bash commands
         { "tool": "^(Edit|Write)$", "match": "migrations/", "label": "edit a migration" }

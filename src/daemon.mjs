@@ -699,6 +699,7 @@ export class Beckon {
       resume: t.started,
       model: project.model,
       permissionMode: project.permissionMode,
+      mcpConfig: project.mcpConfig,
       settings,
       appendPrompt: this.systemPrompt(t, project, user, ref),
       name: `beckon: ${t.title}`,
