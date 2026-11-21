@@ -644,7 +644,7 @@ export class Beckon {
         continue;
       }
       const posted = await this.post(channel, null, `:alarm_clock: ${s.name}`);
-      await this.startThread({ channel, threadTs: posted.ts, project: s.project, text: s.prompt, title: s.name, user: 'schedule' });
+      await this.startThread({ channel: posted.channel ?? channel, threadTs: posted.ts, project: s.project, text: s.prompt, title: s.name, user: 'schedule' });
     }
   }
 

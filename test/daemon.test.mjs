@@ -238,6 +238,22 @@ test('schedules post a message and run once per matching minute', async () => {
   await close();
 });
 
+test('a schedule can post to a member ID, which Slack turns into a DM', async () => {
+  const { beckon, slack, state, done, close } = await setup({
+    config: { schedules: [{ name: 'DM report', cron: '* * * * *', project: 'proj', channel: 'U1', prompt: 'dm report' }] },
+  });
+  const post = slack.call.bind(slack);
+  slack.call = async (method, body) => {
+    const res = await post(method, body);
+    return method === 'chat.postMessage' && body.channel === 'U1' ? { ...res, channel: 'DU1' } : res;
+  };
+  await beckon.tick(new Date('2026-11-23T01:00:00Z'));
+  await done();
+  assert.equal(Object.values(state.threads)[0].channel, 'DU1');
+  assert.ok(slack.texts().includes('echo: dm report'));
+  await close();
+});
+
 test('runs at most maxParallel turns and queues the rest', async () => {
   const { beckon, slack, done, close } = await setup({ config: { maxParallel: 1 } });
   const a = mention('SLEEP');

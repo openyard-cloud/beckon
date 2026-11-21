@@ -121,7 +121,7 @@ When a request is denied, Claude is told not to reach the same result another wa
       "cron": "0 8 * * 1-5",
       "timezone": "Asia/Ho_Chi_Minh",
       "project": "myapp",
-      "channel": "#myapp",
+      "channel": "#myapp",                // or your member ID for a DM
       "prompt": "Summarize yesterday's merged PRs, failing CI runs and open incidents."
     }
   ],
