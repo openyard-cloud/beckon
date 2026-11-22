@@ -149,6 +149,32 @@ test('a one-time code is typed one character at a time, checking the field befor
   assert.deepEqual(away.typed, ['4', '8', '2']);
 });
 
+test('a code digit that went out while the page moved the focus counts as typed; one that did not stops the fill', async () => {
+  const typedAndMoved = [];
+  const sent = setup({
+    readFocus: async () => focus({ subrole: '' }),
+    typeSecret: async ({ secret }) => {
+      typedAndMoved.push(Buffer.from(secret).toString());
+      throw Object.assign(new Error('Peekaboo could not type it (receipt is stale)'), { emitted: 1 });
+    },
+  });
+  const auth = await enroll(sent.broker, sent.relay);
+  const h = sent.broker.create(req({ label: 'PIN', kind: 'otp' }));
+  const r = await sent.relay.handlers.submit(h.id, await submission({ url: h.url, meta: sent.relay.records.get(h.id).meta, secret: '4829', authenticator: auth }));
+  assert.equal(r.status, 'filled');
+  assert.deepEqual(typedAndMoved, ['4', '8', '2', '9']);
+
+  const refused = setup({
+    readFocus: async () => focus({ subrole: '' }),
+    typeSecret: async () => { throw Object.assign(new Error('Peekaboo could not type it (refused before dispatch)'), { emitted: 0 }); },
+  });
+  const auth2 = await enroll(refused.broker, refused.relay);
+  const h2 = refused.broker.create(req({ label: 'PIN', kind: 'otp' }));
+  const r2 = await refused.relay.handlers.submit(h2.id, await submission({ url: h2.url, meta: refused.relay.records.get(h2.id).meta, secret: '4829', authenticator: auth2 }));
+  assert.equal(r2.status, 'failed');
+  assert.match(r2.reason, /refused before dispatch/);
+});
+
 test('cancel and expiry settle requests; enrollment checks its challenge', async () => {
   const { broker, relay } = setup({ ttlMs: 40 });
   await enroll(broker, relay);

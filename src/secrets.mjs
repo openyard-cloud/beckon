@@ -235,7 +235,8 @@ export class SecretBroker {
 
   // A one-time code is typed one character at a time, with the field checked again before each:
   // many sign-in pages split the code into one box per digit and move the focus as each is
-  // typed, which Peekaboo, pinned to the box focused when it started, refuses to follow.
+  // typed, which Peekaboo, pinned to the box focused when it started, refuses to follow. When
+  // Peekaboo reports the key went out but the focus moved, the character counts as typed.
   async type(request, plain) {
     if (request.kind !== 'otp') {
       await this.typeSecret({ app: request.app, secret: plain });
@@ -251,6 +252,10 @@ export class SecretBroker {
         const one = Buffer.from(chars[i], 'utf8');
         try {
           await this.typeSecret({ app: request.app, secret: one });
+        } catch (e) {
+          // One character was sent: the page took it and moved the focus, which is expected here.
+          // The field is checked again before the next one.
+          if (!(e.emitted >= 1)) throw e;
         } finally {
           one.fill(0);
         }
@@ -319,8 +324,12 @@ export function peekabooTypist(peekabooPath) {
     child.on('error', (e) => { clearTimeout(timer); reject(e); });
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`Peekaboo could not type it (${err.trim().split('\n').pop()?.slice(0, 200) || `exit ${code}`})`));
+      if (code === 0) return resolve();
+      const e = new Error(`Peekaboo could not type it (${err.trim().split('\n').pop()?.slice(0, 200) || `exit ${code}`})`);
+      // Peekaboo checks the focused element again after typing. When the page moves the focus as
+      // a key lands (a box per digit), that check fails, but it says how many keys went out.
+      e.emitted = Number(err.match(/At least (\d+) input unit\(s\) were emitted/)?.[1] ?? 0);
+      reject(e);
     });
     child.stdin.end(secret);
   });
