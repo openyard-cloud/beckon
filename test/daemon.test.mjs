@@ -119,6 +119,15 @@ test('ignores strangers, bots and messages not meant for beckon', async () => {
   await close();
 });
 
+test('a mention by the bot ID, as Slack on a phone sometimes sends, counts as a mention', async () => {
+  const { beckon, slack, claudeRuns, done, close } = await setup();
+  await beckon.handleEvent(msg({ text: '<@BBOT> check the ads' }));
+  await done();
+  assert.equal(claudeRuns().length, 1);
+  assert.ok(slack.texts().includes('echo: check the ads'), 'the mention is dropped from what Claude reads');
+  await close();
+});
+
 test('the same message delivered as app_mention and message runs once', async () => {
   const { beckon, claudeRuns, done, close } = await setup();
   const m = mention('once');

@@ -82,6 +82,7 @@ export class Beckon {
     this.configText = null;
     this.hook = null;
     this.botUserId = null;
+    this.botId = null;
     this.teamUrl = null;
     this.channelProjects = new Map();
     this.channelIds = new Map();
@@ -100,6 +101,7 @@ export class Beckon {
     this.hook = hook;
     const auth = await this.slack.call('auth.test');
     this.botUserId = auth.user_id;
+    this.botId = auth.bot_id ?? null;
     this.teamUrl = auth.url ?? null;
     await this.resolveChannels();
     this.loadSchedules();
@@ -246,6 +248,9 @@ export class Beckon {
   async handleEvent(ev) {
     if (ev.type !== 'app_mention' && ev.type !== 'message') return;
     if (ev.bot_id || !ev.user || ev.user === this.botUserId) return;
+    // Slack on a phone can insert the app's bot ID instead of its user ID when @beckon is picked
+    // from the list; both mean beckon.
+    if (this.botId && ev.text) ev.text = ev.text.replace(new RegExp(`<@${this.botId}(\\|[^>]*)?>`, 'g'), `<@${this.botUserId}>`);
     if (ev.subtype && ev.subtype !== 'file_share' && ev.subtype !== 'thread_broadcast') return;
     const seenKey = `${ev.channel}:${ev.ts}`;
     if (this.seen.has(seenKey)) return;
