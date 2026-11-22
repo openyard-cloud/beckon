@@ -96,7 +96,7 @@ export class Progress {
         if (block.type !== 'tool_use') continue;
         const line = describeTool(block.name, block.input, this.cwd);
         if (line) {
-          this.addTask(block.id ?? `tool-${this.tasks.length}`, line);
+          this.addTask(block.id ?? `tool-${this.tasks.length}`, line).tool = true;
           changed = true;
         }
       }
@@ -110,10 +110,19 @@ export class Progress {
     return changed;
   }
 
-  // Close out the steps still open when the run ends.
+  // Close out the steps still open when the run ends. Slack marks the whole plan with a red
+  // warning when any task is an error, so in a run that finished, a tool call that failed and
+  // that Claude got past is shown as done with a note. beckon's own steps (a refused secret, a
+  // denied approval, API billing) keep their error.
   finish(status) {
     const end = status === 'done' ? 'complete' : 'error';
-    for (const t of this.tasks) if (t.status === 'in_progress') t.status = end;
+    for (const t of this.tasks) {
+      if (t.status === 'in_progress') t.status = end;
+      else if (status === 'done' && t.tool && t.status === 'error') {
+        t.status = 'complete';
+        t.output ??= 'Failed; Claude carried on another way';
+      }
+    }
   }
 
   title(now = Date.now(), status = 'working') {
