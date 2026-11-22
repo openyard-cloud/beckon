@@ -222,10 +222,7 @@ export class SecretBroker {
         const reason = checkTarget(await this.readFocus(entry.request.app), entry.request);
         if (reason) result = { status: 'refused', reason };
       }
-      if (!result) {
-        await this.typeSecret({ app: entry.request.app, secret: plain });
-        result = { status: 'filled' };
-      }
+      if (!result) result = await this.type(entry.request, plain);
     } catch (e) {
       result = { status: 'failed', reason: e.message };
     } finally {
@@ -234,6 +231,34 @@ export class SecretBroker {
     this.log(`Secret "${entry.request.label}": ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
     entry.settle(result);
     return result;
+  }
+
+  // A one-time code is typed one character at a time, with the field checked again before each:
+  // many sign-in pages split the code into one box per digit and move the focus as each is
+  // typed, which Peekaboo, pinned to the box focused when it started, refuses to follow.
+  async type(request, plain) {
+    if (request.kind !== 'otp') {
+      await this.typeSecret({ app: request.app, secret: plain });
+      return { status: 'filled' };
+    }
+    const chars = [...plain.toString('utf8')];
+    try {
+      for (let i = 0; i < chars.length; i++) {
+        if (i > 0) {
+          const reason = checkTarget(await this.readFocus(request.app), request);
+          if (reason) return { status: 'failed', reason: `stopped after ${i} of ${chars.length} characters: ${reason}` };
+        }
+        const one = Buffer.from(chars[i], 'utf8');
+        try {
+          await this.typeSecret({ app: request.app, secret: one });
+        } finally {
+          one.fill(0);
+        }
+      }
+    } finally {
+      chars.fill('');
+    }
+    return { status: 'filled' };
   }
 
   // A value for a command: this daemon cannot decrypt it (it has no private key), so it hands the
