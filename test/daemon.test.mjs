@@ -482,6 +482,50 @@ test('a secret goes from the phone into the field, and Claude only learns the ou
   await close();
 });
 
+test('a value for a command reaches only that command, once, and Claude sees it masked', async () => {
+  const relay = { records: new Map(), handlers: {}, open(id, kind, meta) { this.records.set(id, meta); }, close() {} };
+  const logs = [];
+  const broker = new SecretBroker({
+    relayUrl: 'https://relay.example.workers.dev',
+    relay,
+    passkeys: new PasskeyStore(join(tempDir(), 'passkeys.json')),
+    readFocus: async () => ({ error: 'no focus check for a command' }),
+    typeSecret: async () => { throw new Error('nothing is typed for a command'); },
+    log: (m) => logs.push(m),
+  });
+  const auth = makeAuthenticator();
+  const enrollment = broker.createEnrollment('Thi (beckon)');
+  await relay.handlers.enrolled(enrollment.id, registration(auth, { challenge: relay.records.get(enrollment.id).challenge, origin: 'https://relay.example.workers.dev' }));
+  const { beckon, slack, done, close } = await setup({
+    beckonOptions: { secrets: broker, secretScript: fileURLToPath(new URL('../bin/beckon-secret.mjs', import.meta.url)), log: (m) => logs.push(m) },
+  });
+
+  await beckon.handleEvent(mention('SECRETRUN'));
+  const dm = await waitFor(() => slack.posts().find((p) => p.channel === 'U1' && p.text === 'Enter API key for beckon'));
+  assert.match(JSON.stringify(dm.blocks), /as a temporary file/);
+  assert.match(JSON.stringify(dm.blocks), /BECKON_SECRET_FILE/, 'the DM shows which command gets it');
+  const link = dm.blocks.find((b) => b.type === 'actions').elements.find((e) => e.action_id === 'beckon_secret_open').url;
+  const id = new URL(link).pathname.split('/')[2];
+  const meta = relay.records.get(id);
+  assert.equal(meta.run.via, 'file');
+
+  const secret = '{"private_key":"sk-very-secret-9f8e7d"}';
+  const body = await submission({ url: link, meta, secret, authenticator: auth });
+  assert.equal((await relay.handlers.submit(id, body)).status, 'delivered');
+  await done();
+  const reply = slack.texts().filter((t) => t?.startsWith('secret:')).at(-1);
+  const result = JSON.parse(reply.slice('secret: '.length));
+  assert.equal(result.status, 'done');
+  const [path, shown] = result.stdout.trim().split('\n');
+  assert.equal(shown, '[secret]', 'Claude sees the output with the value masked');
+  assert.ok(!existsSync(path), 'the temporary file is gone');
+  assert.ok(!slack.calls.some((c) => JSON.stringify(c.body).includes('sk-very-secret')), 'the value never reaches Slack');
+  assert.ok(!logs.join('\n').includes('sk-very-secret'), 'nor the log');
+  assert.ok(slack.find('chat.update').some((c) => /handed to the command once/.test(JSON.stringify(c.body.blocks))));
+  assert.equal((await relay.handlers.submit(id, body)).status, 'expired', 'the link works once');
+  await close();
+});
+
 test('without secret handoff set up, Claude is told to ask for a manual sign-in', async () => {
   const { beckon, slack, done, close } = await setup();
   await beckon.handleEvent(mention('SECRET'));
