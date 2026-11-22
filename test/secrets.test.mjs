@@ -129,6 +129,26 @@ test('wrong passkeys, tampering, replays elsewhere and a moved focus type nothin
   assert.equal(moved.typed.length, 0);
 });
 
+test('a one-time code is typed one character at a time, checking the field before each', async () => {
+  let checks = 0;
+  const { broker, relay, typed } = setup({ readFocus: async () => { checks += 1; return focus({ subrole: '' }); } });
+  const auth = await enroll(broker, relay);
+  const h = broker.create(req({ label: 'PIN', kind: 'otp' }));
+  const r = await relay.handlers.submit(h.id, await submission({ url: h.url, meta: relay.records.get(h.id).meta, secret: '482913', authenticator: auth }));
+  assert.equal(r.status, 'filled');
+  assert.deepEqual(typed, ['4', '8', '2', '9', '1', '3']);
+  assert.equal(checks, 6);
+
+  let n = 0;
+  const away = setup({ readFocus: async () => (++n > 3 ? focus({ subrole: '', app: 'Slack', bundleId: 'com.tinyspeck.slackmacgap' }) : focus({ subrole: '' })) });
+  const auth2 = await enroll(away.broker, away.relay);
+  const h2 = away.broker.create(req({ label: 'PIN', kind: 'otp' }));
+  const r2 = await away.relay.handlers.submit(h2.id, await submission({ url: h2.url, meta: away.relay.records.get(h2.id).meta, secret: '482913', authenticator: auth2 }));
+  assert.equal(r2.status, 'failed');
+  assert.match(r2.reason, /stopped after 3 of 6 characters: the focus is in Slack/);
+  assert.deepEqual(away.typed, ['4', '8', '2']);
+});
+
 test('cancel and expiry settle requests; enrollment checks its challenge', async () => {
   const { broker, relay } = setup({ ttlMs: 40 });
   await enroll(broker, relay);

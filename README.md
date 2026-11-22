@@ -184,6 +184,7 @@ Screen control acts on the real desktop of the beckon machine. Keep it to the pr
 Claude never types a password or a one-time code, and never asks for one in Slack. When a sign-in needs one, the secret goes from your phone straight into the field, through a relay you deploy to your own Cloudflare account:
 
 1. Claude clicks the field, then runs `beckon-secret --label "Apple ID password" --kind password --app "Google Chrome" --domain apple.com`.
+   For a one-time code or PIN (`--kind otp`), beckon types one character at a time and checks the field again before each, so codes split into a box per digit work too.
 2. The thread says what is being asked for. Each member in `users` gets a DM with an **Enter securely** link.
 3. The link opens a one-time page on your relay. You type the value. The page encrypts it on the phone to a key that exists only in beckon on the Mac, and you confirm with your passkey (Face ID or Touch ID).
 4. The relay hands the ciphertext to beckon over beckon's own outbound connection. beckon then:
