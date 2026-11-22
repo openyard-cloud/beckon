@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { hostMatches, checkTarget, validateRequest, SecretBroker, NoPasskeyError } from '../src/secrets.mjs';
-import { PasskeyStore } from '../src/passkeys.mjs';
+import { PasskeyStore, newKeyPair, decrypt } from '../src/passkeys.mjs';
 import { makeAuthenticator, registration, submission } from './phone.mjs';
 import { tempDir } from './helpers.mjs';
 
@@ -150,4 +150,54 @@ test('cancel and expiry settle requests; enrollment checks its challenge', async
 
 test('only https relays are accepted', () => {
   assert.throws(() => new SecretBroker({ relayUrl: 'http://relay.local', relay: new FakeRelay() }), /https/);
+});
+
+const runReq = (extra = {}) => {
+  const keys = newKeyPair();
+  const { request, errors } = validateRequest({ label: 'Stripe key', kind: 'password', run: { command: 'gh secret set STRIPE_KEY' }, publicKey: keys.publicKey, ...extra });
+  return { keys, request, errors };
+};
+
+test('a request for a command needs a command and the asking process\'s public key', () => {
+  assert.deepEqual(runReq().errors, []);
+  assert.deepEqual(runReq().request.run, { command: 'gh secret set STRIPE_KEY', via: 'stdin', name: null });
+  assert.match(runReq({ run: { command: '' } }).errors.join(), /run:/);
+  assert.match(runReq({ run: { command: 'x', via: 'clipboard' } }).errors.join(), /via:/);
+  assert.match(runReq({ run: { command: 'x', via: 'env', name: 'lower case' } }).errors.join(), /env:/);
+  assert.match(runReq({ publicKey: 'AAAA' }).errors.join(), /publicKey/);
+  assert.deepEqual(runReq({ kind: 'multiline', run: { command: 'x', via: 'file' } }).errors, []);
+  assert.match(validateRequest({ label: 'x', kind: 'multiline', app: 'Google Chrome' }).errors.join(), /multiline is only for a command/);
+});
+
+test('a value for a command is passed on sealed: only the asking process can open it, once', async () => {
+  const { broker, relay, typed, logs } = setup({ readFocus: async () => { throw new Error('no focus check for a command'); } });
+  const auth = await enroll(broker, relay);
+  const { keys, request } = runReq({ kind: 'multiline', run: { command: 'upload --key "$BECKON_SECRET_FILE"', via: 'file' } });
+  const h = broker.create(request);
+  assert.ok(h.url.endsWith(`#k=${keys.publicKey}`), 'the link carries the asking process\'s key');
+  const meta = relay.records.get(h.id).meta;
+  assert.deepEqual(meta.run, { command: 'upload --key "$BECKON_SECRET_FILE"', via: 'file', name: null });
+
+  const secret = '{\n  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE"\n}';
+  const body = await submission({ url: h.url, meta, secret, authenticator: auth });
+  assert.deepEqual(await relay.handlers.submit(h.id, body), { status: 'delivered' }, 'the relay learns only that it was delivered');
+  const result = await h.done;
+  assert.equal(result.status, 'delivered');
+  assert.deepEqual(result.sealed, { id: h.id, epk: body.epk, iv: body.iv, ct: body.ct });
+  assert.equal(decrypt({ ecdh: keys.ecdh, ...result.sealed }).toString(), secret);
+  assert.deepEqual(typed, [], 'nothing is typed');
+  assert.ok(!logs.join('\n').includes('private_key'));
+  assert.equal((await relay.handlers.submit(h.id, body)).status, 'expired', 'one use only');
+});
+
+test('a value for a command still needs the passkey', async () => {
+  const { broker, relay } = setup();
+  await enroll(broker, relay);
+  const { request } = runReq();
+  const h = broker.create(request);
+  const body = await submission({ url: h.url, meta: relay.records.get(h.id).meta, secret: 'sk_live_x', authenticator: makeAuthenticator() });
+  assert.equal((await relay.handlers.submit(h.id, body)).status, 'refused');
+  const result = await h.done;
+  assert.equal(result.status, 'refused');
+  assert.equal(result.sealed, undefined);
 });

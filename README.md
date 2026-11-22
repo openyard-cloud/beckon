@@ -179,7 +179,7 @@ Set it up once on the beckon machine:
 
 Screen control acts on the real desktop of the beckon machine. Keep it to the projects that need it, and keep that machine's sessions to what you would let the agent see. The guard does not check key presses (Return in a form can still submit it) or coordinate clicks outside Xcode and Transporter.
 
-## Passwords and one-time codes (optional)
+## Passwords, codes and other secrets (optional)
 
 Claude never types a password or a one-time code, and never asks for one in Slack. When a sign-in needs one, the secret goes from your phone straight into the field, through a relay you deploy to your own Cloudflare account:
 
@@ -240,6 +240,39 @@ Limits:
 - The page script comes from your relay, so the relay deployment is part of what you trust. Deploy it from this repository, with your Cloudflare account protected by 2FA.
 - Passkey enrollment trusts the first person who opens the enrollment link. It goes to you by DM, works once and expires in a few minutes.
 
+### Secrets for a command
+
+Some tasks need the value itself rather than a field to type it into: an API key to store as a GitHub secret, a token for `wrangler secret put`, a Google Play service-account JSON key for an upload. For those, Claude runs `beckon-secret` with `--run`:
+
+```sh
+beckon-secret --label "Stripe secret key" --run 'gh secret set STRIPE_KEY'
+beckon-secret --label "Sentry token" --env SENTRY_AUTH_TOKEN --run 'npx @sentry/cli releases new 1.4.0'
+beckon-secret --label "Play service account" --kind multiline --file \
+  --run 'bundle exec fastlane supply --json_key "$BECKON_SECRET_FILE" --track internal --aab app.aab'
+```
+
+1. The `beckon-secret` process makes its own key pair and keeps the private half in memory. Its public half goes into the link.
+2. You get a DM with the label and the exact command that will receive the value. The page shows the command again. Multi-line values get a text box and a file picker.
+3. You enter the value and confirm with your passkey. The page encrypts it to that one `beckon-secret` process.
+4. beckon checks the passkey signature and passes the ciphertext back to the process that asked. beckon itself cannot decrypt it, and the link is spent.
+5. The process decrypts the value and gives it to the command once:
+   - **stdin** (default): on the command's standard input.
+   - **`--env NAME`**: in that one environment variable of the command.
+   - **`--file`**: in a mode-600 file in a private temporary folder, at `$BECKON_SECRET_FILE`. The file is overwritten and deleted when the command ends, including when it fails or is interrupted.
+6. The process wipes its copy of the value. Claude gets `done` or `command failed`, the exit code, and the command's output with the value masked.
+
+| Who could read the value | |
+| --- | --- |
+| The relay, Cloudflare, Slack | No. Ciphertext only, and the key is not in the link: only the public half is |
+| The beckon daemon | No. It verifies the passkey but holds no private key for these requests |
+| Anyone opening the link again | No. One use, then it returns "no longer valid" |
+| Claude | Not unless the command prints it, and printed copies are masked. The command is visible in the thread, the DM and the page before you enter anything. Do not send a value to a command you would not run yourself |
+
+Limits:
+- Once the command has the value, what the command does with it is up to the command. `gh secret set` stores it on GitHub, and a `cat` would print it (masked, but still). Check the command on the page before you send.
+- `--env` puts the value in the command's environment, which other processes of the same macOS user can read while it runs. Prefer stdin or `--file`.
+- Values are limited to 8 KB.
+
 ## Config
 
 ```jsonc
@@ -291,7 +324,7 @@ Changes to this file apply without a restart (see [Editing the config file](#edi
 ## Security notes
 
 - **Only listed members.** Anyone not in `users` is ignored, and only listed members can press the buttons. A Slack message is still an instruction to an agent with your access, so keep beckon's channels to people you trust.
-- **Secrets.** Passwords and one-time codes go end to end from your phone to the field through the [secret handoff](#passwords-and-one-time-codes-optional), never through Claude or Slack. Screen control refuses to type into password fields.
+- **Secrets.** Passwords and one-time codes go end to end from your phone to the field through the [secret handoff](#passwords-codes-and-other-secrets-optional), never through Claude or Slack. API keys and other values a command needs go end to end to that one command, [used once and wiped](#secrets-for-a-command). Screen control refuses to type into password fields.
 - **Approval guards.** The approval hook fails closed. If the beckon process is unreachable, the action is denied.
 - **What the rules match.** Always-asked rules match command text, which catches routine mistakes but is not a sandbox. Give the host's CLIs only the access you would give the agent, and protect `main` with branch protection as well.
 - **Tokens.** `~/.beckon/env` holds your Slack tokens. `beckon init` creates it with mode 600, and `beckon doctor` fixes the mode if it drifts.

@@ -1,4 +1,4 @@
-import { newKeyPair, decrypt, signedChallenge, verifyAssertion, verifyRegistration, newId as randomId } from './passkeys.mjs';
+import { newKeyPair, decrypt, signedChallenge, verifyAssertion, verifyRegistration, newId as randomId, unb64url } from './passkeys.mjs';
 import { spawn } from 'node:child_process';
 
 // Secret handoff. When Claude reaches a password or one-time-code field, it asks beckon instead
@@ -9,9 +9,17 @@ import { spawn } from 'node:child_process';
 // checks that the field Claude left focused is still the one described (app, kind of field, site)
 // and types the value with Peekaboo. The relay, Slack, Claude, the logs and the process list never
 // see it: it is held as bytes, passed on stdin and overwritten once typed.
+//
+// A request can instead be "for a command" (beckon-secret --run): the value is for one command
+// Claude runs, like `gh secret set` or an upload that needs a key file. Then the key pair is made
+// by that beckon-secret process, not here. beckon only checks the passkey and hands the sealed
+// value back to the process that asked, which decrypts it, gives it to the command once and
+// wipes it. Nobody else can open it: not the relay, not this daemon, not a second visit to the link.
 
-export const SECRET_KINDS = ['password', 'otp', 'text'];
+export const SECRET_KINDS = ['password', 'otp', 'text', 'multiline'];
+export const RUN_VIA = ['stdin', 'env', 'file'];
 const MAX_SECRET_BYTES = 1024;
+export const MAX_RUN_SECRET_BYTES = 8192;
 const BROWSERS = new Set([
   'com.google.Chrome', 'com.google.Chrome.canary', 'com.apple.Safari', 'com.apple.SafariTechnologyPreview',
   'company.thebrowser.Browser', 'com.brave.Browser', 'com.microsoft.edgemac', 'org.mozilla.firefox',
@@ -68,16 +76,34 @@ function safeHost(url) {
 export function validateRequest(input) {
   const label = typeof input?.label === 'string' ? input.label.trim() : '';
   const kind = input?.kind ?? 'password';
+  const note = typeof input?.note === 'string' ? input.note.slice(0, 200) : '';
+  const errors = [];
+  if (!label || label.length > 80) errors.push('label: a short name for the secret, like "Apple ID password"');
+  if (!SECRET_KINDS.includes(kind)) errors.push(`kind: one of ${SECRET_KINDS.join(', ')}`);
+  if (input?.run !== undefined) {
+    const run = validateRun(input.run, input.publicKey, errors);
+    return { request: { label, kind, note, run, publicKey: input.publicKey, app: '', domains: [] }, errors };
+  }
   const app = typeof input?.app === 'string' ? input.app.trim() : '';
   const domains = (Array.isArray(input?.domains) ? input.domains : input?.domain ? [input.domain] : [])
     .map((d) => String(d).trim().toLowerCase())
     .filter(Boolean);
-  const errors = [];
-  if (!label || label.length > 80) errors.push('label: a short name for the secret, like "Apple ID password"');
-  if (!SECRET_KINDS.includes(kind)) errors.push(`kind: one of ${SECRET_KINDS.join(', ')}`);
+  if (kind === 'multiline') errors.push('kind: multiline is only for a command (--run), not for typing into a field');
   if (!app) errors.push('app: the app whose focused field gets the secret, like "Google Chrome"');
   for (const d of domains) if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)) errors.push(`domain: "${d}" is not a domain`);
-  return { request: { label, kind, app, domains, note: typeof input?.note === 'string' ? input.note.slice(0, 200) : '' }, errors };
+  return { request: { label, kind, app, domains, note }, errors };
+}
+
+function validateRun(input, publicKey, errors) {
+  const command = typeof input?.command === 'string' ? input.command.trim() : '';
+  const via = input?.via ?? 'stdin';
+  const name = input?.name ?? null;
+  if (!command || command.length > 500 || command.includes('\0')) errors.push('run: the command that gets the secret, up to 500 characters');
+  if (!RUN_VIA.includes(via)) errors.push(`via: one of ${RUN_VIA.join(', ')}`);
+  if (via === 'env' && !/^[A-Z_][A-Z0-9_]{0,63}$/.test(name ?? '')) errors.push('env: an environment variable name like STRIPE_KEY');
+  const key = typeof publicKey === 'string' ? unb64url(publicKey) : Buffer.alloc(0);
+  if (key.length !== 65 || key[0] !== 4) errors.push('publicKey: the P-256 public key of the beckon-secret process');
+  return { command, via, name: via === 'env' ? name : null };
 }
 
 export class SecretBroker {
@@ -106,13 +132,16 @@ export class SecretBroker {
   }
 
   // A secret request. `done` settles with { status: filled | refused | cancelled | expired | failed, reason }.
+  // For a command (request.run), `done` settles with { status: delivered, sealed } instead: the
+  // ciphertext for the beckon-secret process that holds the private key.
   create(request) {
     const credentials = this.passkeys.list().map((k) => k.id);
     if (!credentials.length) throw new NoPasskeyError('no passkey is registered with this beckon yet');
-    const keys = newKeyPair();
+    const keys = request.run ? { ecdh: null, publicKey: request.publicKey } : newKeyPair();
     const challenge = this.newId();
     const { entry, done } = this.open('secret', { request, ecdh: keys.ecdh, challenge }, {
       label: request.label, app: request.app, domains: request.domains, inputKind: request.kind, note: request.note, challenge, credentials,
+      ...(request.run ? { run: request.run } : {}),
     });
     return { id: entry.id, url: `${this.origin}/s/${entry.id}#k=${keys.publicKey}`, expiresAt: entry.expiresAt, done };
   }
@@ -178,6 +207,7 @@ export class SecretBroker {
     } catch (e) {
       result = { status: 'refused', reason: e.message };
     }
+    if (!result && entry.request.run) return this.deliver(entry, id, body);
     if (!result) {
       try {
         plain = decrypt({ ecdh: entry.ecdh, id, epk: body.epk, iv: body.iv, ct: body.ct });
@@ -203,6 +233,19 @@ export class SecretBroker {
     }
     this.log(`Secret "${entry.request.label}": ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
     entry.settle(result);
+    return result;
+  }
+
+  // A value for a command: this daemon cannot decrypt it (it has no private key), so it hands the
+  // sealed value to the beckon-secret process waiting on `done` and keeps nothing.
+  deliver(entry, id, body) {
+    const ct = unb64url(body.ct);
+    let result;
+    if (ct.length <= 16) result = { status: 'refused', reason: 'the value is empty' };
+    else if (ct.length > MAX_RUN_SECRET_BYTES + 16) result = { status: 'refused', reason: 'the value is too long' };
+    else result = { status: 'delivered' };
+    this.log(`Secret "${entry.request.label}": ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+    entry.settle(result.status === 'delivered' ? { ...result, sealed: { id, epk: body.epk, iv: body.iv, ct: body.ct } } : result);
     return result;
   }
 

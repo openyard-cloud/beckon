@@ -22,8 +22,8 @@ export const PAGE_SCRIPT = String.raw`(() => {
   const buttons = () => document.querySelectorAll('button');
   const lock = (on) => buttons().forEach((b) => { b.disabled = on; });
   const done = (res, okText) => {
-    if (res.status === 'filled' || res.status === 'enrolled') { say(okText); lock(true); return; }
-    if (res.status === 'cancelled') { say('Cancelled. Nothing was typed.'); lock(true); return; }
+    if (res.status === 'filled' || res.status === 'enrolled' || res.status === 'delivered') { say(okText); lock(true); return; }
+    if (res.status === 'cancelled') { say('Cancelled. Nothing was sent.'); lock(true); return; }
     say('Not done: ' + (res.reason || res.status), true);
     lock(true);
   };
@@ -32,6 +32,15 @@ export const PAGE_SCRIPT = String.raw`(() => {
     const key = new URLSearchParams(location.hash.slice(1)).get('k');
     history.replaceState(null, '', location.pathname); // keep the key out of history and screenshots
     if (!key) { say('This link is missing its key. Open it again from Slack.', true); lock(true); return; }
+    const pick = document.getElementById('pick');
+    if (pick) pick.addEventListener('change', async () => {
+      const file = pick.files && pick.files[0];
+      if (!file) return;
+      if (file.size > 8192) { say('That file is larger than 8 KB.', true); pick.value = ''; return; }
+      document.getElementById('secret').value = await file.text();
+      pick.value = '';
+      say('File loaded. Check the label above, then send it.');
+    });
     document.getElementById('cancel').addEventListener('click', async () => {
       lock(true);
       done(await post({ cancel: true }));
@@ -64,10 +73,10 @@ export const PAGE_SCRIPT = String.raw`(() => {
         done(await post({
           epk: enc(epk), iv: enc(iv), ct: enc(ct),
           passkey: { id: enc(new Uint8Array(cred.rawId)), authenticatorData: enc(new Uint8Array(a.authenticatorData)), clientDataJSON: enc(new Uint8Array(a.clientDataJSON)), signature: enc(new Uint8Array(a.signature)) },
-        }), 'Filled in on your Mac. You can close this page.');
+        }), meta.run ? 'Handed to the command on your Mac, once. This link no longer works; you can close it.' : 'Filled in on your Mac. You can close this page.');
       } catch (e) {
         plain.fill(0);
-        say('Not sent: ' + (e && e.message ? e.message : e) + '. Nothing was typed.', true);
+        say('Not sent: ' + (e && e.message ? e.message : e) + '. Nothing was used.', true);
       }
     });
   } else if (meta.mode === 'enroll') {

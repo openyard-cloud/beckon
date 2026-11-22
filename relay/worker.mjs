@@ -53,7 +53,8 @@ function page(title, body, meta) {
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 -apple-system,system-ui,sans-serif;padding:24px 16px}
 main{max-width:420px;margin:0 auto;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px}
 h1{font-size:19px;margin:0 0 14px}dl{margin:0 0 18px;display:grid;grid-template-columns:auto 1fr;gap:6px 12px}dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
-input{width:100%;font:inherit;font-size:20px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);margin:4px 0 16px}
+input,textarea{width:100%;font:inherit;font-size:20px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);margin:4px 0 16px}
+textarea{font:13px/1.4 ui-monospace,Menlo,monospace;resize:vertical}.pick{display:block;margin:-8px 0 16px}.pick input{font-size:14px;padding:6px;margin:4px 0 0}code{font:13px ui-monospace,Menlo,monospace;overflow-wrap:anywhere}
 .row{display:flex;gap:10px}button{flex:1;font:inherit;font-weight:600;padding:12px;border-radius:10px;border:0;cursor:pointer}
 .go{background:var(--accent);color:#1c2530}.stop{background:transparent;color:var(--muted);border:1px solid var(--line)}
 p{margin:0 0 10px}.muted{color:var(--muted);font-size:14px}#status{min-height:1.4em;margin-top:14px}.bad{color:var(--bad)}
@@ -61,15 +62,27 @@ p{margin:0 0 10px}.muted{color:var(--muted);font-size:14px}#status{min-height:1.
 }
 
 function secretPage(meta) {
-  const field = { password: 'password field', otp: 'one-time code field', text: 'text field' }[meta.inputKind] ?? 'field';
-  const where = meta.domains?.length ? meta.domains.join(', ') : '(not a web page)';
+  const run = meta.run;
+  const multiline = meta.inputKind === 'multiline';
+  const autocomplete = meta.inputKind === 'otp' ? 'one-time-code' : meta.inputKind === 'password' && !run ? 'current-password' : 'off';
+  const max = run ? 8192 : 1024;
+  const details = run
+    ? `<dt>For</dt><dd><code>${esc(run.command)}</code></dd><dt>Given</dt><dd>${{ stdin: 'on the command\'s input', env: `in $${esc(run.name)}`, file: 'as a temporary file' }[run.via] ?? ''}, once</dd>`
+    : `<dt>App</dt><dd>${esc(meta.app)}</dd><dt>Site</dt><dd>${esc(meta.domains?.length ? meta.domains.join(', ') : '(not a web page)')}</dd><dt>Into</dt><dd>the focused ${{ password: 'password field', otp: 'one-time code field', text: 'text field' }[meta.inputKind] ?? 'field'}</dd>`;
+  const input = multiline
+    ? `<textarea id="secret" rows="7" maxlength="${max}" required autofocus spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="${esc(meta.label)}"></textarea>
+<label class="muted pick">or choose a file <input id="pick" type="file"></label>`
+    : `<input id="secret" type="password" autocomplete="${autocomplete}"${meta.inputKind === 'otp' ? ' inputmode="numeric"' : ''} maxlength="${max}" required autofocus aria-label="${esc(meta.label)}">`;
+  const footer = run
+    ? 'Encrypted on this device for the one beckon-secret process on your Mac that asked for it, and signed with your passkey. The relay, Slack, Claude and beckon itself cannot read it. It is used once, then wiped, and this link stops working.'
+    : 'Encrypted on this device for beckon on your Mac and signed with your passkey. The relay, Slack and Claude never see it. This link works once.';
   return page('beckon: enter a secret', `<h1>🔐 ${esc(meta.label)}</h1>
-<dl><dt>App</dt><dd>${esc(meta.app)}</dd><dt>Site</dt><dd>${esc(where)}</dd><dt>Into</dt><dd>the focused ${field}</dd>${meta.note ? `<dt>Note</dt><dd>${esc(meta.note)}</dd>` : ''}</dl>
+<dl>${details}${meta.note ? `<dt>Note</dt><dd>${esc(meta.note)}</dd>` : ''}</dl>
 <form id="form" autocomplete="off">
-<input id="secret" type="password" autocomplete="${meta.inputKind === 'otp' ? 'one-time-code' : meta.inputKind === 'password' ? 'current-password' : 'off'}"${meta.inputKind === 'otp' ? ' inputmode="numeric"' : ''} maxlength="1024" required autofocus aria-label="${esc(meta.label)}">
-<div class="row"><button class="go" type="submit">Fill it in</button><button class="stop" type="button" id="cancel">Cancel</button></div>
+${input}
+<div class="row"><button class="go" type="submit">${run ? 'Send once' : 'Fill it in'}</button><button class="stop" type="button" id="cancel">Cancel</button></div>
 </form><p id="status" role="status"></p>
-<p class="muted">Encrypted on this device for beckon on your Mac and signed with your passkey. The relay, Slack and Claude never see it. This link works once.</p>`, meta);
+<p class="muted">${footer}</p>`, meta);
 }
 
 function enrollPage(meta) {

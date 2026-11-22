@@ -637,6 +637,7 @@ export class Beckon {
     if (this.secrets && this.secretScript) {
       const run = `"${this.nodePath}" "${this.secretScript}"`;
       lines.push(`- Never type a password or one-time code yourself, and never ask for one in Slack. To fill one, first click the field so it has focus, then run: ${run} --label "Apple ID password" --kind password --app "Google Chrome" --domain apple.com (kind: password, otp or text; --domain is the site, required for web pages). It waits while the person enters the value on their phone, then prints the result: filled, refused (with the reason, for example the focus moved), cancelled or expired. You never see the value. Keep that field focused and the page open until it is done.`);
+      lines.push(`- When a command needs a secret value itself (an API key, a token, a service-account JSON key), never ask for it in Slack and never put it in a file you keep. Run: ${run} --label "Stripe secret key" --run 'gh secret set STRIPE_KEY' . The person enters it on their phone, and only that beckon-secret process can open it: the command gets it once on its input (or in one variable with --env NAME, or as a temporary file at $BECKON_SECRET_FILE with --file; use --kind multiline for JSON keys and other multi-line values), then it is wiped. You get the result and the command's output with the value masked. Pick a command that sends the value straight to where it belongs (gh secret set, wrangler secret put, an upload that takes --json_key "$BECKON_SECRET_FILE"); never one that prints, copies or saves it somewhere you can read later.`);
     }
     if (project.instructions) lines.push('', project.instructions);
     return lines.join('\n');
@@ -881,7 +882,8 @@ export class Beckon {
 
   // Claude asks for a password or one-time code (bin/beckon-secret.mjs). The link to the form goes
   // to each listed member in a DM; the thread only says what is being asked for. The secret goes
-  // from the form straight into the focused field and never comes back here.
+  // from the form straight into the focused field and never comes back here. A secret for a
+  // command comes back sealed to the beckon-secret process that asked, which alone can open it.
   async onSecret(key, t, run, payload) {
     if (!this.secrets) {
       return { status: 'unavailable', reason: 'secret handoff is not set up on this beckon. Stop and ask the person to sign in on the Mac themselves.' };
@@ -898,16 +900,25 @@ export class Beckon {
       return { status: 'unavailable', reason: 'no passkey is registered yet. Stop here and say the person needs to add one (DM beckon "passkey"), then reply to continue.' };
     }
     const minutes = Math.round((handoff.expiresAt - this.now()) / 60_000);
-    const where = `${escapeMrkdwn(request.app)}${request.domains.length ? ` · ${request.domains.map(escapeMrkdwn).join(', ')}` : ''}`;
-    const kindText = { password: 'password', otp: 'one-time code', text: 'value' }[request.kind];
+    const kindText = { password: 'password', otp: 'one-time code', text: 'value', multiline: 'value' }[request.kind];
+    const cmd = request.run;
+    const via = cmd && { stdin: 'on its input', env: `in $${cmd.name}`, file: 'as a temporary file' }[cmd.via];
+    const command = cmd && `\`${escapeMrkdwn(oneLine(cmd.command, 300)).replace(/`/g, "'")}\``;
+    const where = cmd ? null : `${escapeMrkdwn(request.app)}${request.domains.length ? ` · ${request.domains.map(escapeMrkdwn).join(', ')}` : ''}`;
+    const mentions = this.config.users.map((u) => `<@${u}>`).join(' ');
     const notice = await this.post(t.channel, t.threadTs, `Secret needed: ${request.label}`, [
-      section(`:closed_lock_with_key: Claude needs a ${kindText}: *${escapeMrkdwn(request.label)}* (${where}). I sent ${this.config.users.map((u) => `<@${u}>`).join(' ')} a private link to enter it.`),
+      section(cmd
+        ? `:closed_lock_with_key: Claude needs a ${kindText} for a command: *${escapeMrkdwn(request.label)}*\n${command}\nI sent ${mentions} a private link to enter it.`
+        : `:closed_lock_with_key: Claude needs a ${kindText}: *${escapeMrkdwn(request.label)}* (${where}). I sent ${mentions} a private link to enter it.`),
     ]);
+    const note = request.note ? `\n_${escapeMrkdwn(request.note)}_` : '';
     const links = [];
     for (const u of this.config.users) {
       try {
         const dm = await this.post(u, null, `Enter ${request.label} for beckon`, [
-          section(`:closed_lock_with_key: *${escapeMrkdwn(request.label)}*\nFor ${where}, into the focused ${kindText} field. Encrypted on your phone for beckon and confirmed with your passkey. The link works once and expires in ${minutes} min.${request.note ? `\n_${escapeMrkdwn(request.note)}_` : ''}`),
+          section(cmd
+            ? `:closed_lock_with_key: *${escapeMrkdwn(request.label)}*\nOnly for this command, ${via}:\n${command}\nEncrypted on your phone for the beckon-secret process that asked, and confirmed with your passkey. It is used once and wiped; Slack, the relay and Claude cannot read it. The link works once and expires in ${minutes} min.${note}`
+            : `:closed_lock_with_key: *${escapeMrkdwn(request.label)}*\nFor ${where}, into the focused ${kindText} field. Encrypted on your phone for beckon and confirmed with your passkey. The link works once and expires in ${minutes} min.${note}`),
           { type: 'actions', elements: [
             { type: 'button', text: { type: 'plain_text', text: 'Enter securely' }, url: handoff.url, action_id: 'beckon_secret_open', style: 'primary' },
             button('Cancel', 'beckon_secret_cancel', handoff.id, 'danger'),
@@ -929,6 +940,7 @@ export class Beckon {
     run.abort.signal.removeEventListener('abort', onAbort);
     const outcome = {
       filled: ':white_check_mark: filled in',
+      delivered: ':white_check_mark: handed to the command once; the link is gone',
       refused: `:no_entry: not filled: ${result.reason}`,
       cancelled: `:no_entry_sign: cancelled (${result.reason})`,
       expired: ':hourglass: expired',
@@ -938,7 +950,7 @@ export class Beckon {
     for (const m of [{ channel: t.channel, ts: notice.ts }, ...links]) {
       await this.slack.call('chat.update', { channel: m.channel, ts: m.ts, text: `${request.label}: ${result.status}`, blocks: [section(done)] }).catch(() => {});
     }
-    run.progress.setTask(stepId, result.status === 'filled' ? 'complete' : 'error', outcome.replace(/^:[a-z_]+: /, ''));
+    run.progress.setTask(stepId, ['filled', 'delivered'].includes(result.status) ? 'complete' : 'error', outcome.replace(/^:[a-z_]+: /, ''));
     if (run.status === 'waiting' && ![...this.approvals.values()].some((x) => x.key === key)) run.status = 'working';
     this.refresh(key);
     return result;

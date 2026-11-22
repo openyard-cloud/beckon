@@ -7,6 +7,7 @@
 //   SLEEP           wait until killed
 //   TABS            open a browser tab, then close it only when the Stop hook asks
 //   SECRET          ask beckon for a password with bin/beckon-secret.mjs and report the result
+//   SECRETRUN       ask beckon for a value for a command (--file --run) and report its output
 //   anything else   reply "echo: <prompt>"
 import { execSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
@@ -62,6 +63,13 @@ if (run || perm) {
     }
   }
   emit({ type: 'result', subtype: 'success', is_error: false, result: verdict === 'ran' ? `ran ${command}` : `denied: ${reason}`, num_turns: 2 });
+} else if (prompt.includes('SECRETRUN')) {
+  const { spawnSync } = await import('node:child_process');
+  const script = new URL('../../bin/beckon-secret.mjs', import.meta.url).pathname;
+  const command = 'echo "$BECKON_SECRET_FILE"; cat "$BECKON_SECRET_FILE"';
+  emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 's1', name: 'Bash', input: { command: `node ${script} --label "API key" --file --run '${command}'` } }] } });
+  const r = spawnSync(process.execPath, [script, '--label', 'API key', '--kind', 'multiline', '--file', '--run', command], { encoding: 'utf8', env: process.env });
+  emit({ type: 'result', subtype: 'success', is_error: false, result: `secret: ${r.stdout.trim()}`, num_turns: 2 });
 } else if (prompt.includes('SECRET')) {
   const { spawnSync } = await import('node:child_process');
   const script = new URL('../../bin/beckon-secret.mjs', import.meta.url).pathname;
