@@ -72,9 +72,8 @@ export const DEFAULT_RULES = [
   },
   {
     label: 'a connector action that changes something',
-    // Reading never asks: get_/list_/search_… tools (get_deployment is not a deploy, list_shared_drives
-    // is not a share), and SQL that only reads (see readOnlySql).
-    skip: (tool, input) => readTool(tool) || (/execute_sql$/i.test(tool) && readOnlySql(input?.query)),
+    // Reads never get here (see connectorReads): get_deployment is not a deploy, list_shared_drives
+    // is not a share, and a SELECT through execute_sql changes nothing.
     tool: String.raw`^mcp__.*(apply_migration|execute_sql|deploy|delete|drop|remove|merge|publish|create_project|pause|restore|reset|rollback|promote|update_project|create_branch|send_message|post_message|send_email|reply|forward|trash|share|invite|schedule_message|transfer|purchase|buy|pay)`,
     match: null,
   },
@@ -150,9 +149,14 @@ export function readOnlySql(sql) {
   return true;
 }
 
+/** A connector call that only reads: a get_/list_/search_… tool, or execute_sql with SQL that only reads. */
+export function connectorReads(toolName, input) {
+  return /^mcp__/i.test(toolName) && (readTool(toolName) || (/execute_sql$/i.test(toolName) && readOnlySql(input?.query)));
+}
+
 function compile(rules) {
   return rules.map((r) => ({
-    skip: r.skip,
+    reads: !!r.reads,
     label: r.label,
     tool: new RegExp(r.tool, 'i'),
     match: r.match ? new RegExp(r.match, 'i') : null,
@@ -169,10 +173,13 @@ export function inputText(toolName, input) {
 
 export function matchRule(toolName, input, extraRules = []) {
   const text = inputText(toolName, input);
+  // Reading through a connector never asks, also under a project rule such as "every Supabase
+  // tool", unless that rule sets "reads": true (for data that must not even be read unasked).
+  const reads = connectorReads(toolName, input);
   for (const rule of [...COMPILED_DEFAULTS, ...compile(extraRules)]) {
     if (!rule.tool.test(toolName)) continue;
     if (rule.match && !rule.match.test(text)) continue;
-    if (rule.skip?.(toolName, input)) continue;
+    if (reads && !rule.reads) continue;
     return { label: rule.label };
   }
   return null;
