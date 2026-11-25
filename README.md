@@ -141,7 +141,7 @@ Two kinds of requests come to Slack:
    - MCP connector tools that deploy, migrate, delete, merge, publish or send messages;
    - clicks on consequential buttons on screen (Submit, Upload, Distribute, Release, Delete, ...), when screen control is set up (see below).
 
-   The full list is in [`src/policy.mjs`](src/policy.mjs). Add your own per project with `alwaysAsk`.
+   The full list is in [`src/policy.mjs`](src/policy.mjs). Add your own per project with `alwaysAsk`. Reading through a connector never asks, also under your own rules: tools named `get_…`, `list_…`, `search_…` and the like, and `execute_sql` with SQL that only reads. A rule with `"reads": true` asks for those too.
 
 2. **Permission prompts.** These are tool uses your permission mode and allow rules do not already cover. **Allow everything in this thread** stops these prompts for the rest of that thread. Always-asked actions still ask.
 
