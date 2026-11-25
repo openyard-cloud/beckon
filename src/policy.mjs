@@ -72,6 +72,9 @@ export const DEFAULT_RULES = [
   },
   {
     label: 'a connector action that changes something',
+    // Reading never asks: get_/list_/search_… tools (get_deployment is not a deploy, list_shared_drives
+    // is not a share), and SQL that only reads (see readOnlySql).
+    skip: (tool, input) => readTool(tool) || (/execute_sql$/i.test(tool) && readOnlySql(input?.query)),
     tool: String.raw`^mcp__.*(apply_migration|execute_sql|deploy|delete|drop|remove|merge|publish|create_project|pause|restore|reset|rollback|promote|update_project|create_branch|send_message|post_message|send_email|reply|forward|trash|share|invite|schedule_message|transfer|purchase|buy|pay)`,
     match: null,
   },
@@ -98,8 +101,58 @@ export const DEFAULT_RULES = [
   },
 ];
 
+// A connector tool that only reads, by the verb its name starts with. Names that also create or
+// run something (get_or_create_drive) do not count.
+export function readTool(tool) {
+  const action = String(tool).split('__').pop().toLowerCase();
+  return /^(get|list|search|read|query|fetch|find|view|describe|count|aggregate)(_|$)/.test(action)
+    && !/(^|_)(or|and|create|set|run|execute|write|upload|put|post|send|apply|update|delete|remove)(_|$)/.test(action);
+}
+
+// Inside a statement that starts with SELECT or WITH, these are what can still write or lock:
+// data-changing CTEs, SELECT … INTO (a new table), EXPLAIN ANALYZE (it runs the query) and
+// row locks. Every other writing statement is caught by what it starts with.
+const SQL_WRITE = /\b(insert|update|delete|merge|truncate|drop|alter|create|grant|revoke|into|analy[sz]e)\b|\bfor\s+(no\s+key\s+update|key\s+share|update|share)\b/i;
+// Words that may stand before "(" without being a function call.
+const SQL_PAREN_WORDS = new Set('as in exists any all some over filter within values using on and or not when then else select from join where with by case is row array between like ilike lateral distinct cast extract materialized numeric decimal varchar char character timestamp timestamptz time interval bit varbit float'.split(' '));
+// Functions that only compute or read: any other call asks, since a user-defined function can write.
+const SQL_READ_FUNCS = new Set(`count sum avg min max coalesce nullif greatest least lower upper initcap length char_length
+  octet_length trim btrim ltrim rtrim substring substr left right replace split_part position strpos concat concat_ws format
+  regexp_replace regexp_match regexp_matches regexp_split_to_array string_to_array array_to_string array_position array_remove
+  array_append array_length array_agg string_agg unnest generate_series cardinality md5 encode decode to_char to_date
+  to_timestamp to_number date_trunc date_part date_bin age now make_interval timezone round floor ceil ceiling abs mod power
+  sqrt trunc sign json_agg jsonb_agg json_object_agg jsonb_object_agg json_build_object jsonb_build_object json_build_array
+  jsonb_build_array to_json to_jsonb row_to_json json_array_length jsonb_array_length json_array_elements jsonb_array_elements
+  jsonb_array_elements_text json_each jsonb_each jsonb_each_text jsonb_object_keys jsonb_typeof jsonb_pretty jsonb_path_query
+  row_number rank dense_rank percent_rank cume_dist ntile lag lead first_value last_value nth_value percentile_cont
+  percentile_disc mode bool_and bool_or every stddev stddev_pop stddev_samp variance corr pg_size_pretty pg_total_relation_size
+  pg_relation_size pg_table_size pg_indexes_size pg_database_size pg_typeof format_type obj_description col_description
+  current_setting has_table_privilege has_schema_privilege`.split(/\s+/));
+
+/** True only for SQL that can do nothing but read: SELECT/WITH/SHOW/EXPLAIN/VALUES/TABLE statements,
+ *  no data-changing clause, and no call to a function outside a known read-only list. */
+export function readOnlySql(sql) {
+  if (typeof sql !== 'string' || !sql.trim()) return false;
+  const s = sql
+    .replace(/\$(\w*)\$[\s\S]*?\$\1\$/g, "''") // dollar-quoted text
+    .replace(/'(?:[^']|'')*'/g, "''") // string literals
+    .replace(/"(?:[^"]|"")*"/g, 'q') // quoted identifiers
+    .replace(/--[^\n]*/g, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ');
+  if (/['"$]|\/\*/.test(s.replace(/''/g, ''))) return false; // unbalanced quoting: do not guess
+  if (SQL_WRITE.test(s)) return false;
+  const stmts = s.split(';').map((x) => x.trim()).filter(Boolean);
+  if (!stmts.length || !stmts.every((x) => /^\(*\s*(select|with|show|explain|values|table)\b/i.test(x))) return false;
+  for (const [, name] of s.matchAll(/([\w.]+)\s*\(/g)) {
+    const n = name.toLowerCase();
+    if (n.includes('.') || !(SQL_PAREN_WORDS.has(n) || SQL_READ_FUNCS.has(n))) return false;
+  }
+  return true;
+}
+
 function compile(rules) {
   return rules.map((r) => ({
+    skip: r.skip,
     label: r.label,
     tool: new RegExp(r.tool, 'i'),
     match: r.match ? new RegExp(r.match, 'i') : null,
@@ -119,6 +172,7 @@ export function matchRule(toolName, input, extraRules = []) {
   for (const rule of [...COMPILED_DEFAULTS, ...compile(extraRules)]) {
     if (!rule.tool.test(toolName)) continue;
     if (rule.match && !rule.match.test(text)) continue;
+    if (rule.skip?.(toolName, input)) continue;
     return { label: rule.label };
   }
   return null;

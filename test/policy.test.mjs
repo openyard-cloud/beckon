@@ -62,8 +62,46 @@ test('asks before connector actions that change something', () => {
     assert.equal(matchRule('mcp__peekaboo__browser', { action }), null, action);
   }
   assert.equal(matchRule('mcp__claude_ai_Gmail__search_threads', {}), null);
+  for (const t of ['mcp__claude_ai_Vercel__get_deployment', 'mcp__claude_ai_Vercel__list_deployments', 'mcp__claude_ai_Google_Drive__list_shared_drives', 'mcp__claude_ai_Google_Drive__get_shared_drive_metadata', 'mcp__claude_ai_Vercel__get_rolling_release']) {
+    assert.equal(matchRule(t, {}), null, t);
+  }
+  assert.ok(matchRule('mcp__claude_ai_Vercel__cancel_deployment', {}), 'cancel_deployment still asks');
   assert.equal(matchRule('mcp__supabase__list_tables', {}), null);
   assert.equal(matchRule('Read', { file_path: '/etc/passwd' }), null);
+});
+
+test('SQL that only reads runs without asking; anything that could write asks', () => {
+  const sql = (query) => matchRule('mcp__claude_ai_Supabase__execute_sql', { project_id: 'p', query });
+  for (const q of [
+    "with real as (\n select p.* from player_profiles p join auth.users u on u.id=p.auth_id\n where u.email not ilike '%@pickcourt.test' and coalesce(p.name, '') <> ''\n) select count(*) from real",
+    'select 1',
+    'SELECT id, created_at FROM bookings ORDER BY created_at DESC LIMIT 20;',
+    "select date_trunc('day', created_at) d, count(*) from bookings group by 1",
+    'explain select * from courts',
+    "select 'delete from users' as note -- update in a comment\n",
+    'select table_name from information_schema.tables; select count(*) from courts',
+    "select row_number() over (partition by venue_id order by created_at) from bookings",
+  ]) assert.equal(sql(q), null, q);
+  for (const q of [
+    'delete from bookings',
+    'update users set name = 1',
+    'insert into logs values (1)',
+    'select * into backup from users',
+    'explain analyze delete from users',
+    'select 1; drop table users',
+    'select delete_everything()',
+    'select public.cleanup_users()',
+    "select set_config('role', 'service_role', false)",
+    "select nextval('seq')",
+    'truncate courts',
+    'do $$ begin perform 1; end $$',
+    'with x as (delete from users returning *) select * from x',
+    'select * from users for update',
+    "select 'unterminated",
+    '',
+  ]) assert.ok(sql(q), q);
+  assert.ok(matchRule('mcp__claude_ai_Supabase__execute_sql', {}), 'no query: ask');
+  assert.ok(matchRule('mcp__claude_ai_Supabase__apply_migration', { query: 'select 1' }), 'migrations always ask');
 });
 
 test('asks before releasing an app or pushing a patch to users', () => {
