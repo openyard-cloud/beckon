@@ -45,3 +45,14 @@ test('alwaysAsk accepts strings and objects', () => {
 test('reads env files', () => {
   assert.deepEqual(parseEnvFile('# c\nA=1\nexport B="two words"\nC=\'x=y\'\n bad line\n'), { A: '1', B: 'two words', C: 'x=y' });
 });
+
+test('watches need a channel, a known project and a valid match', () => {
+  const { errors, config } = validateConfig({
+    users: ['U1'],
+    projects: { a: { path: '/a' } },
+    watches: [{ channel: '#alerts', project: 'a', match: 'LỖI' }, { channel: '#x', project: 'nope', match: '(' , cooldownMinutes: -1 }],
+  });
+  for (const needle of ['watches[1].project', 'watches[1].match', 'watches[1].cooldownMinutes']) assert.ok(errors.some((e) => e.includes(needle)), needle);
+  assert.equal(errors.length, 3);
+  assert.deepEqual(config.watches[0], { name: '#alerts alerts', channel: '#alerts', project: 'a', match: 'LỖI', from: null, prompt: null, cooldownMinutes: 60 });
+});

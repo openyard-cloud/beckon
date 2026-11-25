@@ -48,6 +48,8 @@ export function removeProject(raw, name) {
   if (Object.keys(raw.projects).length === 1) return `\`${key}\` is the only project, and beckon needs at least one.`;
   const used = (raw.schedules ?? []).filter((s) => s.project === key).map((s) => `"${s.name ?? s.cron}"`);
   if (used.length) return `\`${key}\` is used by the schedule ${used.join(', ')}. Change or remove the schedule in the config file first.`;
+  const watched = (raw.watches ?? []).filter((w) => w.project === key).map((w) => `"${w.name ?? w.channel}"`);
+  if (watched.length) return `\`${key}\` is used by the watch ${watched.join(', ')}. Change or remove the watch in the config file first.`;
   delete raw.projects[key];
   if (raw.defaultProject === key) delete raw.defaultProject;
   return null;
