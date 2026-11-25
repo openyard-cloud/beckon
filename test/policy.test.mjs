@@ -70,6 +70,20 @@ test('asks before connector actions that change something', () => {
   assert.equal(matchRule('Read', { file_path: '/etc/passwd' }), null);
 });
 
+test('a project rule over a whole connector still lets reads through, unless it says reads: true', () => {
+  const rule = [{ tool: '^mcp__.*supabase', match: null, label: 'Supabase (production database)' }];
+  const call = (tool, input = {}, rules = rule) => matchRule(`mcp__claude_ai_Supabase__${tool}`, input, rules);
+  assert.equal(call('execute_sql', { query: "select table_name from information_schema.tables where table_schema='public' and table_name ilike '%view%'" }), null);
+  assert.equal(call('list_tables'), null);
+  assert.equal(call('get_project'), null);
+  assert.equal(call('execute_sql', { query: 'update users set name = 1' })?.label, 'a connector action that changes something');
+  assert.equal(call('create_branch')?.label, 'a connector action that changes something');
+  assert.equal(call('generate_typescript_types')?.label, 'Supabase (production database)', 'not a read verb: the project rule asks');
+  const strict = [{ ...rule[0], reads: true }];
+  assert.equal(call('execute_sql', { query: 'select 1' }, strict)?.label, 'Supabase (production database)');
+  assert.equal(call('list_tables', {}, strict)?.label, 'Supabase (production database)');
+});
+
 test('SQL that only reads runs without asking; anything that could write asks', () => {
   const sql = (query) => matchRule('mcp__claude_ai_Supabase__execute_sql', { project_id: 'p', query });
   for (const q of [

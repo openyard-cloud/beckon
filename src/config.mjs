@@ -110,7 +110,7 @@ export function validateConfig(raw) {
           if (r.tool) checkRegex(r.tool, `${where}.tool`, errors);
           if (r.match) checkRegex(r.match, `${where}.match`, errors);
           if (!r.tool && !r.match) errors.push(`${where}: give "tool", "match" or both`);
-          rules.push({ tool: r.tool ?? '^Bash$', match: r.match ?? null, label: r.label ?? 'project rule' });
+          rules.push({ tool: r.tool ?? '^Bash$', match: r.match ?? null, label: r.label ?? 'project rule', ...(r.reads === true ? { reads: true } : {}) });
         } else {
           errors.push(`${where}: a regex string or { "tool", "match", "label" }`);
         }
