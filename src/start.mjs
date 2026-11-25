@@ -62,7 +62,7 @@ export async function start(env = process.env) {
   watchConfig(paths.config, beckon);
 
   let stopping = false;
-  const shutdown = async (signal) => {
+  const shutdown = async (signal, graceMs = beckon.config.shutdownGraceMinutes * 60_000) => {
     if (stopping) {
       log(`Got ${signal} again, stopping now`);
       await beckon.stopAll();
@@ -70,15 +70,21 @@ export async function start(env = process.env) {
     }
     stopping = true;
     log(`Got ${signal}, finishing running tasks before stopping`);
-    await beckon.shutdownGracefully(beckon.config.shutdownGraceMinutes * 60_000);
+    await beckon.shutdownGracefully(graceMs);
     secretSetup?.broker.cancelAll('beckon is shutting down');
     secretSetup?.relay.stop();
     socket.stop();
     await hook.close();
     process.exit(0);
   };
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  // launchd kills a LaunchAgent 60 seconds after SIGTERM, whatever ExitTimeOut says. Stop in time
+  // to deny open approvals cleanly instead of leaving buttons that nothing answers.
+  const termGrace = () => Math.min(beckon.config.shutdownGraceMinutes * 60_000, process.platform === 'darwin' ? 45_000 : Infinity);
+  process.on('SIGTERM', () => shutdown('SIGTERM', termGrace()));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  // `beckon service restart` on macOS: drain for the full grace period, then exit; launchd's
+  // KeepAlive starts beckon again.
+  process.on('SIGUSR2', () => shutdown('SIGUSR2 (restart)'));
 }
 
 // Edits to config.json take effect without a restart. A file that does not parse or validate is

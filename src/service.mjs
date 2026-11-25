@@ -148,13 +148,29 @@ export async function serviceStatus({ platform = process.platform } = {}) {
   return 'not supported on this platform';
 }
 
-// Restart through the service manager, which sends SIGTERM and waits for running tasks to
-// finish (up to shutdownGraceMinutes) before starting beckon again.
-export async function restartService({ platform = process.platform } = {}) {
+async function launchdPid() {
+  const res = await run('launchctl', ['print', `gui/${userInfo().uid}/${LABEL}`]);
+  return res.ok ? Number(res.stdout.match(/\bpid = (\d+)/)?.[1]) || null : null;
+}
+
+// Restart and let running tasks finish first (up to shutdownGraceMinutes). On macOS launchd kills
+// a LaunchAgent 60 seconds after SIGTERM whatever ExitTimeOut says, so `kickstart -k` would cut a
+// run waiting for approval; instead beckon gets SIGUSR2, drains, exits, and KeepAlive restarts it.
+export async function restartService({ platform = process.platform, waitMs = 4 * 60 * 60 * 1000, pollMs = 2000 } = {}) {
   if (platform === 'darwin') {
-    const res = await run('launchctl', ['kickstart', '-k', `gui/${userInfo().uid}/${LABEL}`], { timeout: 4 * 60 * 60 * 1000 });
-    if (!res.ok) throw new Error(`launchctl kickstart failed: ${res.stderr.trim()}`);
-    return;
+    const pid = await launchdPid();
+    if (!pid) {
+      const res = await run('launchctl', ['kickstart', `gui/${userInfo().uid}/${LABEL}`]);
+      if (!res.ok) throw new Error(`launchctl kickstart failed: ${res.stderr.trim()}`);
+      return;
+    }
+    process.kill(pid, 'SIGUSR2');
+    for (const until = Date.now() + waitMs; Date.now() < until;) {
+      await new Promise((r) => setTimeout(r, pollMs));
+      const now = await launchdPid();
+      if (now && now !== pid) return;
+    }
+    throw new Error('beckon did not come back after the restart; see ~/.beckon/logs/beckon.log');
   }
   if (platform === 'linux') {
     const res = await run('systemctl', ['--user', 'restart', 'beckon.service'], { timeout: 4 * 60 * 60 * 1000 });
