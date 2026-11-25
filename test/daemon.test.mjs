@@ -108,6 +108,17 @@ test('a mention starts a thread, a reply resumes the same session', async () => 
   await close();
 });
 
+test('an approval button from a run that no longer exists says so instead of doing nothing', async () => {
+  const { beckon, slack, close } = await setup();
+  const stale = { ...click('beckon_allow', 'gone-approval-id'), message: { ts: '111.222' } };
+  assert.equal(await beckon.handleInteractive(stale), false);
+  const [update] = slack.find('chat.update', (b) => b.ts === '111.222');
+  await close();
+  assert.ok(update, 'the stale approval message is updated');
+  assert.match(update.body.text, /already ended/);
+  assert.deepEqual(update.body.blocks, [], 'its buttons are removed');
+});
+
 test('ignores strangers, bots and messages not meant for beckon', async () => {
   const { beckon, claudeRuns, done, close } = await setup();
   await beckon.handleEvent(mention('hi', { user: 'U999' }));

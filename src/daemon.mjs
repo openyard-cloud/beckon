@@ -1043,11 +1043,21 @@ export class Beckon {
       case 'beckon_stop':
         return this.stop(action.value, user);
       case 'beckon_allow':
-        return this.settleApproval(action.value, 'allow', user);
       case 'beckon_allow_all':
-        return this.settleApproval(action.value, 'allow', user, { allowAll: true });
-      case 'beckon_deny':
-        return this.settleApproval(action.value, 'deny', user);
+      case 'beckon_deny': {
+        const settled = await this.settleApproval(action.value, action.action_id === 'beckon_deny' ? 'deny' : 'allow', user, { allowAll: action.action_id === 'beckon_allow_all' });
+        // A button from a run that no longer exists (beckon restarted or stopped while it waited):
+        // say so instead of doing nothing.
+        if (!settled && payload.channel?.id && payload.message?.ts) {
+          await this.slack.call('chat.update', {
+            channel: payload.channel.id,
+            ts: payload.message.ts,
+            text: ':hourglass: This approval belonged to a run that has already ended (beckon was restarted or stopped). Reply in the thread to carry on.',
+            blocks: [],
+          }).catch((e) => this.log(`Could not update a stale approval: ${e.message}`));
+        }
+        return settled;
+      }
       case 'beckon_secret_cancel':
         return this.secrets?.cancel(action.value, `cancelled in Slack by <@${user}>`);
       default:
