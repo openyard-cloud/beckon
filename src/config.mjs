@@ -155,6 +155,36 @@ export function validateConfig(raw) {
     schedules.push({ name: s.name ?? `schedule ${i + 1}`, cron: s.cron, timezone, project: s.project, channel: s.channel, prompt: s.prompt });
   }
 
+  // Channels where a new alert starts an investigation on its own, without a mention.
+  const watches = [];
+  const watchNames = new Set();
+  if (raw.watches !== undefined && !Array.isArray(raw.watches)) errors.push('watches: must be a list');
+  for (const [i, w] of (Array.isArray(raw.watches) ? raw.watches : []).entries()) {
+    const at = `watches[${i}]`;
+    if (!w || typeof w !== 'object') { errors.push(`${at}: must be an object`); continue; }
+    for (const key of ['channel', 'project', 'match']) {
+      if (typeof w[key] !== 'string' || !w[key]) errors.push(`${at}.${key}: required`);
+    }
+    if (w.project && !projects[w.project]) errors.push(`${at}.project: "${w.project}" is not one of the projects`);
+    if (typeof w.match === 'string' && w.match) checkRegex(w.match, `${at}.match`, errors);
+    if (w.from !== undefined && !isStringArray(w.from)) errors.push(`${at}.from: a list of bot IDs, member IDs or bot names`);
+    if (w.prompt !== undefined && typeof w.prompt !== 'string') errors.push(`${at}.prompt: must be a string`);
+    const cooldown = w.cooldownMinutes ?? 60;
+    if (!Number.isFinite(cooldown) || cooldown < 0 || cooldown > 1440) errors.push(`${at}.cooldownMinutes: a number from 0 to 1440`);
+    const name = typeof w.name === 'string' && w.name ? w.name : `${w.channel} alerts`;
+    if (watchNames.has(name)) errors.push(`${at}.name: "${name}" is used twice`);
+    watchNames.add(name);
+    watches.push({
+      name,
+      channel: w.channel,
+      project: w.project,
+      match: w.match,
+      from: isStringArray(w.from) ? w.from : null,
+      prompt: typeof w.prompt === 'string' && w.prompt ? w.prompt : null,
+      cooldownMinutes: cooldown,
+    });
+  }
+
   const num = (key, def, min, max) => {
     const v = raw[key] ?? def;
     if (!Number.isFinite(v) || v < min || v > max) errors.push(`${key}: a number from ${min} to ${max}`);
@@ -166,6 +196,7 @@ export function validateConfig(raw) {
     projects,
     defaultProject: raw.defaultProject ?? (Object.keys(projects).length === 1 ? Object.keys(projects)[0] : null),
     schedules,
+    watches,
     approvalTimeoutMinutes: num('approvalTimeoutMinutes', 60, 1, 1440),
     maxParallel: num('maxParallel', 3, 1, 20),
     keepDays: num('keepDays', 7, 1, 365),

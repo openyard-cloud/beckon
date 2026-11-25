@@ -122,9 +122,26 @@ Commands have a fixed shape, so a task that happens to start with the same word 
 ### Editing the config file
 
 You can also edit `~/.beckon/config.json` by hand. beckon notices the change and applies it within a second, without a restart:
-- Projects, channels, the default project, schedules, `users` and the numeric settings change for new work.
+- Projects, channels, the default project, schedules, watches, `users` and the numeric settings change for new work.
 - A run already going keeps the settings it started with.
 - If the new file is not valid JSON or has problems, beckon keeps the config it has and writes the problems to its log (`~/.beckon/logs/beckon.log`). Run `beckon doctor` to see them.
+
+### Watching an alert channel
+
+beckon can look into alerts as they arrive, without a mention. Add a `watches` entry to the config with the channel your monitoring posts to, the project to investigate in, and a `match` regex for the messages that mean something is wrong:
+
+```jsonc
+"watches": [
+  { "name": "backend alerts", "channel": "#myapp-alerts", "project": "myapp", "match": ":red_circle:|ERROR" }
+]
+```
+
+Then `/invite @beckon` to that channel.
+
+- **Which messages.** New top-level messages whose text or attachments match `match`, from anyone, including bots and webhooks. Recovery messages, replies in threads and beckon's own posts do not match. With `from`, only those senders count.
+- **What it does.** beckon reacts with :eyes: and starts a run in the alert's thread. By default Claude only investigates: it reads logs, deploys and code, then replies with the cause, whether it is still happening, what it affected and a suggested fix. Set `prompt` to ask for something else. Reply in the thread to continue, for example "fix it".
+- **One run per incident.** An alert that comes within `cooldownMinutes` of the previous one (60 by default) gets a link to the running investigation instead of a new run. A flapping service therefore keeps one thread until it has been quiet for that long.
+- **Trust.** The alert text goes to Claude marked as data, not instructions, and the usual approvals still apply. Still, anyone who can post in the channel can start a run, so use `from` when the channel is open to others.
 
 ## Approvals
 
@@ -304,6 +321,17 @@ Limits:
       "project": "myapp",
       "channel": "#myapp",                // or your member ID for a DM
       "prompt": "Summarize yesterday's merged PRs, failing CI runs and open incidents."
+    }
+  ],
+  "watches": [                            // see "Watching an alert channel"
+    {
+      "name": "backend alerts",
+      "channel": "#myapp-alerts",
+      "project": "myapp",
+      "match": ":red_circle:|ERROR",      // a regex on new messages, case ignored
+      "from": ["Uptime Bot"],             // optional: bot names, bot IDs or member IDs
+      "prompt": "Find the cause in the logs and suggest a fix. Do not change anything.", // optional
+      "cooldownMinutes": 60               // default
     }
   ],
   "approvalTimeoutMinutes": 60,

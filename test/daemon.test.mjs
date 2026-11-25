@@ -553,3 +553,68 @@ test('without secret handoff set up, Claude is told to ask for a manual sign-in'
   assert.match(slack.texts().find((t) => t?.startsWith('secret:')), /"status":"unavailable"/);
   await close();
 });
+
+test('a watched channel investigates a matching bot alert in its thread, once per incident', async () => {
+  const { beckon, slack, state, claudeRuns, done, close } = await setup({
+    config: { watches: [{ name: 'alerts', channel: 'CALERT', project: 'proj', match: 'LỖI|:red_circle:', cooldownMinutes: 60 }] },
+  });
+  let now = Date.parse('2026-11-25T06:00:00Z');
+  beckon.now = () => now;
+  const alert = (text, extra) => ({ type: 'message', channel: 'CALERT', channel_type: 'channel', bot_id: 'BMON', username: 'Pickcourt Leads', ts: `1800000100.${String(++tsN).padStart(6, '0')}`, text, ...extra });
+
+  // recoveries, other bots' chatter and our own posts start nothing
+  await beckon.handleEvent(alert(':large_green_circle: Web pickcourt.com đã phục hồi'));
+  await beckon.handleEvent(alert(':red_circle: LỖI', { bot_id: 'BBOT' }));
+  assert.equal(Object.keys(state.threads).length, 0);
+
+  const first = alert(':red_circle: Web <https://pickcourt.com|pickcourt.com> LỖI: 503 (bắt đầu thấy lúc 13:08)', { subtype: 'bot_message' });
+  await beckon.handleEvent(first);
+  await beckon.handleEvent(first); // Slack can deliver an event twice
+  await done();
+  const key = `CALERT:${first.ts}`;
+  assert.equal(state.threads[key].project, 'proj');
+  assert.ok(slack.find('reactions.add').some((c) => c.body.timestamp === first.ts && c.body.name === 'eyes'));
+  const runs = claudeRuns();
+  assert.equal(runs.length, 1);
+  const echoed = slack.texts().find((t) => t?.startsWith('echo:'));
+  assert.match(echoed, /Find out what went wrong/);
+  assert.match(echoed, /<alert>\n:red_circle: Web pickcourt.com \(https:\/\/pickcourt.com\) LỖI: 503/);
+
+  // the same outage flapping 40 minutes later links to the investigation
+  now += 40 * 60_000;
+  const again = alert(':red_circle: Web pickcourt.com LỖI: 503 (13:52)');
+  await beckon.handleEvent(again);
+  await done();
+  assert.equal(claudeRuns().length, 1);
+  assert.match(slack.posts().find((p) => p.thread_ts === again.ts).text, /Already looking into this alert in <https:\/\/test.slack.com\/archives\/CALERT\/p1800000100/);
+
+  // quiet for longer than the cooldown: a new incident gets its own run
+  now += 61 * 60_000;
+  const later = alert(':red_circle: Web pickcourt.com LỖI: 500 (15:01)');
+  await beckon.handleEvent(later);
+  await done();
+  assert.equal(claudeRuns().length, 2);
+  assert.ok(state.threads[`CALERT:${later.ts}`]);
+
+  // a reply in the alert thread from a listed member continues that session
+  await beckon.handleEvent(msg({ channel: 'CALERT', thread_ts: first.ts, text: 'fix it' }));
+  await done();
+  assert.equal(claudeRuns().length, 3);
+  await close();
+});
+
+test('a watch can be limited to some senders, and a mention in the channel is still a request', async () => {
+  const { beckon, state, done, close } = await setup({
+    config: { watches: [{ channel: 'CALERT', project: 'proj', match: 'error', from: ['Uptime Bot'] }] },
+  });
+  const ts = () => `1800000200.${String(++tsN).padStart(6, '0')}`;
+  await beckon.handleEvent({ type: 'message', channel: 'CALERT', bot_id: 'BX', username: 'Someone else', text: 'error everywhere', ts: ts() });
+  assert.equal(Object.keys(state.threads).length, 0);
+  const hit = { type: 'message', channel: 'CALERT', bot_id: 'BUP', bot_profile: { name: 'Uptime Bot' }, text: '', attachments: [{ fallback: 'API error rate 12%' }], ts: ts() };
+  await beckon.handleEvent(hit);
+  assert.ok(state.threads[`CALERT:${hit.ts}`]);
+  await beckon.handleEvent(msg({ channel: 'CALERT', type: 'app_mention', text: '<@UBOT> proj: why the error?' }));
+  await done();
+  assert.equal(Object.keys(state.threads).length, 2);
+  await close();
+});

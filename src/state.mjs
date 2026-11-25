@@ -6,11 +6,11 @@ import { dirname } from 'node:path';
 export class StateStore {
   constructor(file) {
     this.file = file;
-    this.data = { threads: {}, schedules: {} };
+    this.data = { threads: {}, schedules: {}, watches: {} };
     if (file && existsSync(file)) {
       try {
         const loaded = JSON.parse(readFileSync(file, 'utf8'));
-        this.data = { threads: loaded.threads ?? {}, schedules: loaded.schedules ?? {} };
+        this.data = { threads: loaded.threads ?? {}, schedules: loaded.schedules ?? {}, watches: loaded.watches ?? {} };
       } catch {
         renameSync(file, `${file}.broken-${Date.now()}`);
       }
@@ -23,6 +23,10 @@ export class StateStore {
 
   get schedules() {
     return this.data.schedules;
+  }
+
+  get watches() {
+    return this.data.watches;
   }
 
   save() {
