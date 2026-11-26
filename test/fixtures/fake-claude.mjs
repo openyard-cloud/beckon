@@ -8,6 +8,7 @@
 //   TABS            open a browser tab, then close it only when the Stop hook asks
 //   SECRET          ask beckon for a password with bin/beckon-secret.mjs and report the result
 //   SECRETRUN       ask beckon for a value for a command (--file --run) and report its output
+//   TEAMPLAN        as pm: assign dev and qa; once they have finished, report
 //   PINGPONG        answer as the --agent, then tag the other of dev and qa with PINGPONG
 //   anything else   reply "echo: <prompt>"
 import { execSync } from 'node:child_process';
@@ -102,6 +103,7 @@ if (run || perm) {
 } else {
   emit({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } });
   const me = opt('--agent');
-  const result = /PINGPONG/.test(prompt) ? `done by ${me}\n@${me === 'qa' ? 'dev' : 'qa'} PINGPONG` : `echo: ${prompt.trim()}`;
+  const lead = me === 'pm' && /have finished/.test(prompt) ? 'All done, checked.' : me === 'pm' && /TEAMPLAN/.test(prompt) ? 'Plan:\n@dev build it\nwith care\n\n@qa check it' : null;
+  const result = lead ?? (/PINGPONG/.test(prompt) ? `done by ${me}\n@${me === 'qa' ? 'dev' : 'qa'} PINGPONG` : `echo: ${prompt.trim()}`);
   emit({ type: 'result', subtype: 'success', is_error: false, result, num_turns: 1 });
 }

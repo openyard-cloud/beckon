@@ -120,6 +120,7 @@ export function validateConfig(raw) {
       }
       const agents = agentsConfig(p.agents, at, isStringArray(channels) ? channels : [], errors);
       if (p.defaultAgent !== undefined && !agents[p.defaultAgent]) errors.push(`${at}.defaultAgent: "${p.defaultAgent}" is not one of this project's agents`);
+      if (p.lead !== undefined && !agents[p.lead]) errors.push(`${at}.lead: "${p.lead}" is not one of this project's agents`);
       projects[name] = {
         name,
         path,
@@ -133,6 +134,8 @@ export function validateConfig(raw) {
         mcpConfig: typeof p.mcpConfig === 'string' ? expandHome(p.mcpConfig) : null,
         agents,
         defaultAgent: typeof p.defaultAgent === 'string' && agents[p.defaultAgent] ? p.defaultAgent : null,
+        // The agent that leads the others: it plans the work and assigns it, and gets their reports.
+        lead: typeof p.lead === 'string' && agents[p.lead] ? p.lead : null,
       };
     }
   }
