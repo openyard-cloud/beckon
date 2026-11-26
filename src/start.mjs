@@ -59,6 +59,29 @@ export async function start(env = process.env) {
   socket.on('interactive', safely('Button', (p) => beckon.handleInteractive(p)));
   socket.on('ready', () => log('Listening for Slack messages'));
   await socket.start();
+  // Agents with a Slack app of their own: one more connection each, into the same beckon. Tokens
+  // are SLACK_BOT_TOKEN_<APP> and SLACK_APP_TOKEN_<APP>; without them the agent posts as beckon.
+  const agentSockets = [];
+  const appNames = new Set(Object.values(config.projects).flatMap((p) => Object.values(p.agents ?? {}).map((a) => a.slackApp)).filter((n) => n && n !== 'MAIN'));
+  for (const name of appNames) {
+    const bot = env[`SLACK_BOT_TOKEN_${name}`];
+    const app = env[`SLACK_APP_TOKEN_${name}`];
+    if (!bot?.startsWith('xoxb-') || !app?.startsWith('xapp-')) {
+      log(`Agent app ${name}: SLACK_BOT_TOKEN_${name} and SLACK_APP_TOKEN_${name} are not in ${paths.env}; its agents post as beckon`);
+      continue;
+    }
+    try {
+      const auth = await beckon.addApp(name, new SlackApi(bot));
+      const s = new SocketClient(app, { log: (m) => log(`[${name}] ${m}`) });
+      s.on('event', safely('Event', (ev) => beckon.handleEvent(ev, name)));
+      s.on('interactive', safely('Button', (p) => beckon.handleInteractive(p, name)));
+      s.on('ready', () => log(`Listening for Slack messages as ${auth.user ?? name}`));
+      await s.start();
+      agentSockets.push(s);
+    } catch (e) {
+      log(`Agent app ${name} could not connect: ${e.message}; its agents post as beckon`);
+    }
+  }
   watchConfig(paths.config, beckon);
 
   let stopping = false;
@@ -74,6 +97,7 @@ export async function start(env = process.env) {
     secretSetup?.broker.cancelAll('beckon is shutting down');
     secretSetup?.relay.stop();
     socket.stop();
+    for (const s of agentSockets) s.stop();
     await hook.close();
     process.exit(0);
   };

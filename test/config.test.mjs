@@ -90,3 +90,14 @@ test('project agents: names, skills folders, channels of the project, and refere
   assert.equal(config.schedules[0].agent, 'pm');
   assert.equal(config.projects.a.defaultAgent, null);
 });
+
+test('an agent can name its own Slack app, or beckon\'s main one', () => {
+  const { errors, config } = validateConfig({
+    users: ['U1'],
+    projects: { a: { path: '/a', agents: { qa: { slackApp: 'qa' }, pm: { slackApp: 'main' }, x: { slackApp: 'not ok!' } } } },
+  });
+  assert.deepEqual(errors.length, 1);
+  assert.match(errors[0], /agents\.x\.slackApp/);
+  assert.equal(config.projects.a.agents.qa.slackApp, 'QA');
+  assert.equal(config.projects.a.agents.pm.slackApp, 'MAIN');
+});

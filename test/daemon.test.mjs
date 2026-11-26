@@ -653,7 +653,8 @@ test('a project agent takes tasks by name, by channel or by default, and a threa
   assert.equal(dirs.length, 1, 'a skills folder that is not there is left out');
   assert.ok(dirs[0].endsWith(join('.claude', 'roles', 'qa')) && dirs[0].includes(join('wt', 'proj')));
   assert.ok(slack.texts().includes('echo: check the booking flow'), 'the name is not part of the task');
-  assert.ok(slack.posts().some((p) => p.blocks?.some((b) => b.type === 'context' && /\*qa\* agent/.test(b.elements[0].text))));
+  assert.ok(slack.posts().some((p) => p.username === 'QA'), 'the agent posts under its own name');
+  assert.ok(!slack.posts().some((p) => p.blocks?.some((b) => b.type === 'context' && /agent/.test(b.elements?.[0]?.text ?? ''))), 'no extra agent line once the name shows');
   const prompt = run.argv[run.argv.indexOf('--append-system-prompt') + 1];
   assert.match(prompt, /project's \*qa\* agent/);
   assert.match(prompt, /other agents work in the same Slack channel: @dev \(builds it\), @designer/);
@@ -723,6 +724,60 @@ test('agents are tagged with @name, post under their own name, and hand a thread
     await beckon.handleEvent(msg({ text: 'thanks, carry on', thread_ts: ping.ts }));
     await done();
     assert.equal(t.handoffs, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('agents with their own Slack apps: a mention of the app is a task for it, it posts through its app, and hand-overs mention it for real', async () => {
+  const { beckon, slack, state, claudeRuns, done, close } = await setup({
+    config: {
+      projects: { proj: { path: '/tmp', channels: ['#proj'], agents: { pm: { slackApp: 'main' }, qa: { slackApp: 'QA' }, dev: { slackApp: 'be' } }, defaultAgent: 'pm' } },
+      maxHandoffs: 1,
+    },
+  });
+  try {
+    const qaSlack = new FakeSlack({ userId: 'UQA', botId: 'BQA', user: 'beckon-qa' });
+    const beSlack = new FakeSlack({ userId: 'UBE', botId: 'BBE', user: 'beckon-be' });
+    await beckon.addApp('QA', qaSlack);
+    await beckon.addApp('BE', beSlack);
+
+    // the same message arrives through every app's connection; it runs once, as qa, through QA's app
+    const ask = msg({ text: '<@UQA> check the login page' });
+    await beckon.handleEvent(ask, 'BE');
+    await beckon.handleEvent({ ...ask, type: 'app_mention' }, 'QA');
+    await beckon.handleEvent(ask);
+    await done();
+    assert.equal(claudeRuns().length, 1);
+    assert.equal(state.threads[`CPROJ:${ask.ts}`].agent, 'qa');
+    const qaPosts = qaSlack.posts();
+    assert.ok(qaPosts.some((p) => p.text === 'echo: check the login page'));
+    assert.ok(qaPosts.every((p) => !p.username), 'an agent with its own app posts as itself, no custom name');
+    assert.ok(!slack.posts().some((p) => p.text === 'echo: check the login page'));
+    assert.ok(qaSlack.find('chat.delete').length >= 1, 'its own progress message is removed through its app');
+
+    // beckon's own app is the pm, as itself
+    const plan = mention('plan the next sprint');
+    await beckon.handleEvent(plan);
+    await done();
+    assert.equal(state.threads[`CPROJ:${plan.ts}`].agent, 'pm');
+    const pmAnswer = slack.posts().find((p) => p.text === 'echo: plan the next sprint');
+    assert.ok(pmAnswer && !pmAnswer.username);
+
+    // dev hands to qa: the tag in its answer becomes a real mention of QA's app
+    const ping = msg({ text: '<@UBE> PINGPONG' });
+    await beckon.handleEvent(ping);
+    await waitFor(() => slack.posts().some((p) => /Not handing this to \*dev\*/.test(p.text)));
+    await done();
+    const devAnswer = beSlack.posts().find((p) => /done by dev/.test(JSON.stringify(p.blocks)));
+    assert.match(JSON.stringify(devAnswer.blocks), /<@UQA> PINGPONG/);
+    assert.ok(qaSlack.posts().some((p) => p.text === 'done by qa'));
+
+    // a DM to QA's app is answered by QA, in that DM
+    await beckon.handleEvent({ type: 'message', channel: 'DQA1', channel_type: 'im', user: 'U1', ts: '1800000099.000001', text: 'hello qa' }, 'QA');
+    await done();
+    assert.equal(state.threads['DQA1:1800000099.000001'].agent, 'qa');
+    assert.ok(qaSlack.posts().some((p) => p.channel === 'DQA1' && p.text === 'echo: hello qa'));
   } finally {
     await close();
   }
