@@ -13,7 +13,8 @@ export function tempDir(prefix = 'beckon-test-') {
 
 // Records every Slack Web API call and answers like Slack would.
 export class FakeSlack {
-  constructor() {
+  constructor({ userId = 'UBOT', botId = 'BBOT', user = 'beckon' } = {}) {
+    Object.assign(this, { userId, botId, user });
     this.calls = [];
     this.n = 0;
     this.replies = {};
@@ -21,7 +22,7 @@ export class FakeSlack {
 
   async call(method, body = {}) {
     this.calls.push({ method, body });
-    if (method === 'auth.test') return { ok: true, user_id: 'UBOT', bot_id: 'BBOT', user: 'beckon', team: 'Test', url: 'https://test.slack.com/' };
+    if (method === 'auth.test') return { ok: true, user_id: this.userId, bot_id: this.botId, user: this.user, team: 'Test', url: 'https://test.slack.com/' };
     if (method === 'chat.postMessage') return { ok: true, ts: `1700000000.${String(++this.n).padStart(6, '0')}`, channel: body.channel };
     if (method === 'conversations.list') return { ok: true, channels: [{ id: 'CPROJ', name: 'proj', is_member: true }] };
     if (method === 'conversations.replies') return { ok: true, messages: this.replies[body.ts] ?? [] };

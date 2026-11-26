@@ -240,11 +240,12 @@ function agentsConfig(raw, at, projectChannels, errors) {
       errors.push(`${where}: must be an object; {} runs the Claude Code agent of the same name`);
       continue;
     }
-    for (const k of ['agent', 'description', 'model', 'displayName', 'icon']) {
+    for (const k of ['agent', 'description', 'model', 'displayName', 'icon', 'slackApp']) {
       if (a[k] !== undefined && (typeof a[k] !== 'string' || !a[k])) errors.push(`${where}.${k}: must be a string`);
     }
     if (typeof a.agent === 'string' && a.agent && !/^[a-z0-9][a-z0-9_:-]*$/i.test(a.agent)) errors.push(`${where}.agent: the name of a Claude Code agent, like "qa"`);
     if (typeof a.icon === 'string' && a.icon && !/^:[a-z0-9_+-]+:$/i.test(a.icon) && !/^https:\/\//.test(a.icon)) errors.push(`${where}.icon: an emoji like ":mag:" or an https image address`);
+    if (typeof a.slackApp === 'string' && a.slackApp && !/^[a-z0-9_]+$/i.test(a.slackApp)) errors.push(`${where}.slackApp: a short name like "QA"; its tokens are SLACK_BOT_TOKEN_QA and SLACK_APP_TOKEN_QA in the env file, or "main" for beckon's own app`);
     const skills = a.skills === undefined ? [] : typeof a.skills === 'string' ? [a.skills] : a.skills;
     if (!isStringArray(skills)) errors.push(`${where}.skills: a folder of skills (it holds skills/<name>/SKILL.md), or a list of them; relative to the repository, or absolute`);
     if (a.permissionMode !== undefined && !PERMISSION_MODES.includes(a.permissionMode)) errors.push(`${where}.permissionMode: one of ${PERMISSION_MODES.join(', ')}`);
@@ -264,6 +265,8 @@ function agentsConfig(raw, at, projectChannels, errors) {
       model: typeof a.model === 'string' && a.model ? a.model : null,
       permissionMode: PERMISSION_MODES.includes(a.permissionMode) ? a.permissionMode : null,
       channels: isStringArray(channels) ? channels : [],
+      // A Slack app of its own (a real member people can @mention), or "main": beckon's app as is.
+      slackApp: typeof a.slackApp === 'string' && /^[a-z0-9_]+$/i.test(a.slackApp) ? a.slackApp.toUpperCase() : null,
     };
   }
   return agents;

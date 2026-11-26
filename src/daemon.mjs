@@ -101,6 +101,9 @@ export class Beckon {
     this.hook = null;
     this.botUserId = null;
     this.botId = null;
+    // Agents' own Slack apps: name -> { name, slack, botUserId, botId }, and the DMs each one owns.
+    this.apps = new Map();
+    this.dmApps = new Map();
     this.teamUrl = null;
     this.channelProjects = new Map();
     this.channelIds = new Map();
@@ -259,11 +262,32 @@ export class Beckon {
   }
 
   // `as`: an agent's name and icon (needs chat:write.customize; without it, beckon's own).
+  // An agent's own Slack app, if it has one that is connected.
+  appOf(agent) {
+    return (agent?.slackApp && this.apps.get(agent.slackApp)) || null;
+  }
+
+  // The app that can post in this conversation: the one a DM belongs to, else the agent's own app,
+  // else beckon's.
+  slackFor(channel, agent = null) {
+    const dm = this.dmApps.get(channel);
+    if (dm) return this.apps.get(dm)?.slack ?? this.slack;
+    return this.appOf(agent)?.slack ?? this.slack;
+  }
+
+  async addApp(name, slack) {
+    const auth = await slack.call('auth.test');
+    this.apps.set(name, { name, slack, botUserId: auth.user_id, botId: auth.bot_id ?? null });
+    return auth;
+  }
+
   async post(channel, threadTs, text, blocks, as = null) {
     const body = { channel, text, unfurl_links: false, unfurl_media: false };
     if (threadTs) body.thread_ts = threadTs;
     if (blocks) body.blocks = blocks;
-    if (as && !this.noAgentIdentity) {
+    const client = this.slackFor(channel, as);
+    if (client !== this.slack) return client.call('chat.postMessage', body);
+    if (as && as.slackApp !== 'MAIN' && !this.noAgentIdentity) {
       body.username = as.displayName;
       if (as.icon.startsWith(':')) body.icon_emoji = as.icon;
       else body.icon_url = as.icon;
@@ -287,9 +311,9 @@ export class Beckon {
     }
   }
 
-  async react(channel, ts, name) {
+  async react(channel, ts, name, as = null) {
     try {
-      await this.slack.call('reactions.add', { channel, timestamp: ts, name });
+      await this.slackFor(channel, as).call('reactions.add', { channel, timestamp: ts, name });
     } catch {
       /* reactions are a courtesy */
     }
@@ -297,8 +321,10 @@ export class Beckon {
 
   // ---- incoming Slack events ----
 
-  async handleEvent(ev) {
+  // `via`: the agent app whose connection delivered the event (null: beckon's own).
+  async handleEvent(ev, via = null) {
     if (ev.type !== 'app_mention' && ev.type !== 'message') return;
+    if (via && (ev.channel_type === 'im' || String(ev.channel).startsWith('D'))) this.dmApps.set(ev.channel, via);
     if (await this.handleWatched(ev)) return;
     if (ev.bot_id || !ev.user || ev.user === this.botUserId) return;
     // Slack on a phone can insert the app's bot ID instead of its user ID when @beckon is picked
@@ -310,7 +336,19 @@ export class Beckon {
     this.seen.add(seenKey);
     if (this.seen.size > 2000) this.seen.delete(this.seen.values().next().value);
 
-    const mentioned = ev.type === 'app_mention' || String(ev.text ?? '').includes(`<@${this.botUserId}>`);
+    // A mention of an agent's own app (`@Beckon-QA`) is a task for that agent; the first one wins.
+    let tagApp = null;
+    let tagAt = Infinity;
+    for (const app of this.apps.values()) {
+      for (const id of [app.botUserId, app.botId].filter(Boolean)) {
+        const re = new RegExp(`<@${id}(\\|[^>]*)?>`, 'g');
+        const at = String(ev.text ?? '').search(re);
+        if (at >= 0 && at < tagAt) { tagAt = at; tagApp = app.name; }
+        ev.text = String(ev.text ?? '').replace(re, ' ').replace(/^\s+/, '');
+      }
+    }
+    if (!tagApp && via && this.dmApps.get(ev.channel) === via) tagApp = via;
+    const mentioned = ev.type === 'app_mention' || String(ev.text ?? '').includes(`<@${this.botUserId}>`) || !!tagApp;
     const isDM = ev.channel_type === 'im' || String(ev.channel).startsWith('D');
     const key = ev.thread_ts ? `${ev.channel}:${ev.thread_ts}` : null;
     const known = key && this.state.threads[key];
@@ -337,7 +375,8 @@ export class Beckon {
       // "qa: check it" hands the thread to another agent of its project, from this turn on.
       known.handoffs = 0;
       let rest = text;
-      const named = this.agentPrefix(known.project, text);
+      const appAgent = tagApp && this.agentOnApp(known.project, tagApp);
+      const named = appAgent ? { agent: appAgent, rest: text } : this.agentPrefix(known.project, text);
       if (named) {
         rest = named.rest;
         if (known.agent !== named.agent) {
@@ -346,7 +385,7 @@ export class Beckon {
         }
         if (!rest) return this.post(ev.channel, ev.thread_ts, `This thread now goes to *${named.agent}*. Send the task.`);
       }
-      await this.react(ev.channel, ev.ts, 'eyes');
+      await this.react(ev.channel, ev.ts, 'eyes', this.agentOf(known, this.config.projects[known.project]));
       return this.enqueue(key, { text: rest, user: ev.user, ts: ev.ts });
     }
 
@@ -365,6 +404,9 @@ export class Beckon {
     } else {
       projectName = this.channelProjects.get(ev.channel) ?? (isDM ? this.config.defaultProject : null);
     }
+    if (tagApp && (!projectName || !this.agentOnApp(projectName, tagApp))) {
+      projectName = Object.keys(this.config.projects).find((p) => this.agentOnApp(p, tagApp)) ?? projectName;
+    }
     if (!projectName) {
       const names = Object.keys(this.config.projects).map((n) => `\`${n}\``).join(', ');
       const first = Object.keys(this.config.projects)[0];
@@ -374,7 +416,8 @@ export class Beckon {
 
     // The agent: named at the start ("qa: ..."), else the channel's agent, else the project's default.
     const project = this.config.projects[projectName];
-    const named = this.agentPrefix(projectName, body);
+    const appAgent = tagApp && this.agentOnApp(projectName, tagApp);
+    const named = appAgent ? { agent: appAgent, rest: body } : this.agentPrefix(projectName, body);
     let agent = null;
     if (named) {
       agent = named.agent;
@@ -390,11 +433,27 @@ export class Beckon {
       const context = await this.threadContext(ev.channel, ev.thread_ts, ev.ts);
       if (context) prompt = `${context}\n\n${body}`;
     }
-    await this.react(ev.channel, ev.ts, 'eyes');
+    await this.react(ev.channel, ev.ts, 'eyes', project.agents?.[agent]);
     return this.startThread({ channel: ev.channel, threadTs: replyTs, project: projectName, agent, text: prompt, title: body, user: ev.user, ts: ev.ts });
   }
 
   // "qa: ..." at the start of a message, where qa is one of the project's agents (case ignored).
+  agentOnApp(projectName, appName) {
+    const agents = this.config.projects[projectName]?.agents ?? {};
+    return Object.values(agents).find((a) => a.slackApp === appName)?.name ?? null;
+  }
+
+  // "@qa" in an agent's answer becomes a real mention of that agent's own app, when it has one.
+  linkAgents(text, project) {
+    let out = text;
+    for (const a of Object.values(project?.agents ?? {})) {
+      const app = this.appOf(a);
+      if (!app) continue;
+      out = out.replace(new RegExp(`(^|[\\s(>*_])@${a.name}\\b`, 'gi'), `$1<@${app.botUserId}>`);
+    }
+    return out;
+  }
+
   // "@qa ..." (a tag) works anywhere a name prefix does; `tagOnly` accepts only the tag.
   agentPrefix(projectName, text, { tagOnly = false } = {}) {
     const agents = this.config.projects[projectName]?.agents;
@@ -458,7 +517,7 @@ export class Beckon {
 
   async threadContext(channel, threadTs, beforeTs) {
     try {
-      const res = await this.slack.call('conversations.replies', { channel, ts: threadTs, limit: 50 });
+      const res = await this.slackFor(channel).call('conversations.replies', { channel, ts: threadTs, limit: 50 });
       const lines = [];
       for (const m of res.messages ?? []) {
         if (Number(m.ts) >= Number(beforeTs)) break;
@@ -795,6 +854,7 @@ export class Beckon {
       lines.push(`- In this thread you are the project's *${agent.name}* agent${agent.description ? ` (${agent.description})` : ''}. Stay in that role and do your part only.`);
       if (others.length) {
         const list = others.map((n) => `@${n}${project.agents[n].description ? ` (${project.agents[n].description})` : ''}`).join(', ');
+        // (each tag shows in Slack as a real mention of that agent when it has its own app)
         lines.push(`- The project's other agents work in the same Slack channel: ${list}. People give one a task by tagging it, like "@${others[0]} ...". To hand the work on when the next step belongs to another role, end your final message with one line that starts with the tag and says what to do, like "@${others[0]} check the booking flow in PR #12". beckon then gives that agent this thread, worktree and conversation. Hand on only when that role is really needed next; never hand back and forth, and if a person must decide something, ask them instead of tagging an agent.`);
       }
     }
@@ -829,6 +889,7 @@ export class Beckon {
     try {
       const first = await this.post(t.channel, t.threadTs, 'Working…', this.progressBlocks(key, run), this.agentOf(t, project));
       run.progressTs = first.ts;
+      run.slack = this.slackFor(t.channel, this.agentOf(t, project));
       run.ticker = setInterval(() => this.refresh(key), 30_000);
       run.ticker.unref?.();
 
@@ -977,7 +1038,9 @@ export class Beckon {
   agentBlock(key) {
     const t = this.state.threads[key];
     const agent = this.agentOf(t, this.config.projects[t?.project]);
-    return agent ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `*${agent.name}* agent` }] }] : [];
+    // Shown only when the message does not already carry the agent's name.
+    const named = agent && (this.appOf(agent) || (agent.slackApp !== 'MAIN' && !this.noAgentIdentity));
+    return agent && !named ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `*${agent.name}* agent` }] }] : [];
   }
 
   progressBlocks(key, run) {
@@ -993,7 +1056,7 @@ export class Beckon {
   async finishRun(key, run) {
     const t = this.state.threads[key];
     run.progress.finish(run.status);
-    const reply = (run.reply ?? '').trim();
+    const reply = this.linkAgents((run.reply ?? '').trim(), this.config.projects[t.project]);
     const pieces = reply ? chunkMarkdown(emphasizeSummary(reply)) : [];
     const summary = reply ? oneLine(firstLine(reply), 300) : run.progress.title(this.now(), run.status);
     const blocks = [...this.agentBlock(key), run.progress.planBlock(this.now(), run.status)];
@@ -1004,7 +1067,7 @@ export class Beckon {
       await this.post(t.channel, t.threadTs, oneLine(piece, 300), [{ type: 'markdown', text: piece }], as);
     }
     if (run.progressTs) {
-      await this.slack.call('chat.delete', { channel: t.channel, ts: run.progressTs }).catch(() => {});
+      await (run.slack ?? this.slack).call('chat.delete', { channel: t.channel, ts: run.progressTs }).catch(() => {});
     }
   }
 
@@ -1028,7 +1091,7 @@ export class Beckon {
   async updateProgress(key, run) {
     const t = this.state.threads[key];
     run.lastUpdate = this.now();
-    await this.slack.call('chat.update', {
+    await (run.slack ?? this.slack).call('chat.update', {
       channel: t.channel,
       ts: run.progressTs,
       text: oneLine(run.progress.render(this.now(), run.status), 200),
@@ -1214,7 +1277,7 @@ export class Beckon {
       if (run) this.refresh(a.key);
     }
     // The question was only there to ask; the answer lives in the plan, so the thread stays short.
-    this.slack.call('chat.delete', { channel: a.channel, ts: a.ts })
+    this.slackFor(a.channel).call('chat.delete', { channel: a.channel, ts: a.ts })
       .catch((e) => this.log(`Could not remove the approval message: ${e.message}`));
 
     if (decision === 'allow') {
@@ -1238,7 +1301,7 @@ export class Beckon {
     if (!this.allowed(user)) {
       const channel = payload.channel?.id;
       if (channel) {
-        await this.slack.call('chat.postEphemeral', { channel, user, text: 'Only the people listed in beckon\'s config can do that.' }).catch(() => {});
+        await this.slackFor(channel).call('chat.postEphemeral', { channel, user, text: 'Only the people listed in beckon\'s config can do that.' }).catch(() => {});
       }
       return;
     }
@@ -1252,7 +1315,7 @@ export class Beckon {
         // A button from a run that no longer exists (beckon restarted or stopped while it waited):
         // say so instead of doing nothing.
         if (!settled && payload.channel?.id && payload.message?.ts) {
-          await this.slack.call('chat.update', {
+          await this.slackFor(payload.channel.id).call('chat.update', {
             channel: payload.channel.id,
             ts: payload.message.ts,
             text: ':hourglass: This approval belonged to a run that has already ended (beckon was restarted or stopped). Reply in the thread to carry on.',
