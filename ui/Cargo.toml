@@ -1,0 +1,17 @@
+[package]
+name = "beckon-ui"
+version = "0.1.0"
+edition = "2021"
+description = "A small local web UI for beckon: projects, connections, runs and usage"
+license = "MIT"
+
+[dependencies]
+tiny_http = "0.12"
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
