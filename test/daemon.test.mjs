@@ -802,7 +802,7 @@ test('a lead agent plans, its team works through the tasks one after another, an
     const devPrompt = runs[1].argv[runs[1].argv.indexOf('--append-system-prompt') + 1];
     assert.match(devPrompt, /team led by @pm, which gave you this task/);
     const leadPrompt = runs[0].argv[runs[0].argv.indexOf('--append-system-prompt') + 1];
-    assert.match(leadPrompt, /You lead this project's team: @dev, @qa/);
+    assert.match(leadPrompt, /You lead this project's team: dev \(subagent_type "dev"\), qa/);
     const report = slack.posts().find((p) => /All done, checked/.test(p.text));
     assert.match(report.text, /^<@U1> All done/, 'the report mentions the person who asked');
     const t = state.threads[`CPROJ:${ask.ts}`];
@@ -833,6 +833,59 @@ test('a lead\'s team stops after maxHandoffs agent turns without a person', asyn
     await waitFor(() => slack.posts().some((p) => /Stopped passing work on: 2 agent turns/.test(p.text)));
     await done();
     assert.deepEqual(claudeRuns().map((r) => r.argv[r.argv.indexOf('--agent') + 1]), ['pm', 'dev', 'qa']);
+  } finally {
+    await close();
+  }
+});
+
+test('the lead runs its team as subagents: each member posts under its own app, the lead loads their skills and reports', async () => {
+  const skills = { pm: tempDir(), dev: tempDir(), qa: tempDir() };
+  const { beckon, slack, claudeRuns, done, close } = await setup({
+    config: {
+      projects: {
+        proj: {
+          path: '/tmp',
+          channels: ['#proj'],
+          agents: { pm: { slackApp: 'main', skills: skills.pm }, dev: { agent: 'senior-dev', slackApp: 'BE', skills: skills.dev }, qa: { slackApp: 'QA', skills: [skills.qa, skills.pm] } },
+          defaultAgent: 'pm',
+          lead: 'pm',
+        },
+      },
+    },
+  });
+  try {
+    const qaSlack = new FakeSlack({ userId: 'UQA', botId: 'BQA' });
+    const beSlack = new FakeSlack({ userId: 'UBE', botId: 'BBE' });
+    await beckon.addApp('QA', qaSlack);
+    await beckon.addApp('BE', beSlack);
+
+    await beckon.handleEvent(mention('SUBAGENTS ship the booking page'));
+    await done();
+    assert.equal(claudeRuns().length, 1, 'one session: the team ran inside it');
+    const run = claudeRuns()[0];
+    const prompt = run.argv[run.argv.indexOf('--append-system-prompt') + 1];
+    assert.match(prompt, /dev \(subagent_type "senior-dev"\)/);
+    const dirs = run.argv.flatMap((a, i) => (a === '--plugin-dir' ? [run.argv[i + 1]] : []));
+    assert.deepEqual(dirs, [skills.pm, skills.dev, skills.qa], 'the lead loads every member skill folder, once each');
+    assert.match(prompt, /in the same message, so they run at the same time/);
+
+    // each member: a "working on" message under its app, then replaced by its last words
+    const beStart = beSlack.posts().find((p) => p.text === 'Build the page…');
+    assert.ok(beStart, 'dev posts through its own app when it starts');
+    const beDone = beSlack.find('chat.update').map((c) => c.body).find((b) => /Built the page in PR #7/.test(JSON.stringify(b.blocks)));
+    assert.ok(beDone, 'dev\'s report replaces its working message');
+    assert.match(JSON.stringify(beDone.blocks), /<@UQA> to check it/, 'its @qa is a real mention');
+    assert.ok(!JSON.stringify(beDone.blocks).includes('Working on it'), 'only its last words');
+    const qaDone = qaSlack.find('chat.update').map((c) => c.body).find((b) => /Checked: 3 of 3 pass/.test(JSON.stringify(b.blocks)));
+    assert.ok(qaDone, 'a foreground member posts the report from the Agent tool result');
+    assert.ok(/login ok/.test(JSON.stringify(qaDone.blocks)) && !/agentId|usage|hand-back/.test(JSON.stringify(qaDone.blocks)), 'only the report, without the frame');
+    assert.ok(!slack.posts().some((p) => /Look around/.test(p.text)), 'a subagent that is not a project agent gets no message');
+
+    const plan = slack.posts().filter((p) => /Plan: dev builds and qa checks together/.test(p.text));
+    assert.equal(plan.length, 1, 'the lead\'s plan is posted once, under its own name, before the team starts');
+    assert.match(prompt, /First decide who the work really needs/);
+    const report = slack.posts().find((p) => /Team done/.test(p.text));
+    assert.match(report.text, /^<@U1> Team done/, 'the lead\'s report mentions the person who asked');
   } finally {
     await close();
   }

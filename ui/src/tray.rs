@@ -349,6 +349,22 @@ impl Bar {
                 out.push(format!("#and {} more", runs.len() - MAX_RUNS));
             }
         }
+        // each project with agents: who they are, the lead, who is working
+        for p in ov["projectList"].as_array().cloned().unwrap_or_default() {
+            let agents = p["agents"].as_array().cloned().unwrap_or_default();
+            if agents.is_empty() {
+                continue;
+            }
+            let names: Vec<String> = agents
+                .iter()
+                .map(|a| {
+                    let n = a["name"].as_str().unwrap_or("");
+                    let mark = if a["running"].as_u64().unwrap_or(0) > 0 { "● " } else { "" };
+                    if a["lead"].as_bool() == Some(true) { format!("{mark}{n} (lead)") } else { format!("{mark}{n}") }
+                })
+                .collect();
+            out.push(format!("#{} · {} agents: {}", p["name"].as_str().unwrap_or(""), agents.len(), names.join(", ")));
+        }
         out.push("-".into());
         out.push(format!("#{}", self.today));
         if up {

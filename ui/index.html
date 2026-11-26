@@ -43,6 +43,10 @@ textarea{min-height:64px;resize:vertical}
 input.err,textarea.err{border-color:var(--bad)}
 .row{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:0 12px}
 .full{grid-column:1/-1}
+.agents{border-top:1px solid var(--line);margin-top:12px;padding-top:10px}
+.agents h4{margin:0 0 6px}
+.agent{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0}
+.warn{color:var(--warn)}
 .head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .head h3{margin:0;font-size:15px}
 .stack>*+*{margin-top:12px}
@@ -154,9 +158,10 @@ async function overview() {
         stat('CPU', d ? d.treeCpu.toFixed(1) + '%' : '–', d ? `daemon ${d.cpu.toFixed(1)}%` : ''),
         stat('Setup', `${o.projects} project${o.projects === 1 ? '' : 's'}`, `${o.schedules} schedule(s) · ${o.watches} watch(es) · ${o.threads} threads`),
       ),
+      projectsBlock(o.projectList ?? []),
       h('h2', {}, `Running now (${o.runs.length})`),
       o.runs.length ? h('div', { class: 'wrap' }, h('table', {}, h('tr', {}, h('th', {}, 'Project'), h('th', {}, 'Task'), h('th', { class: 'n' }, 'Time'), h('th', { class: 'n' }, 'Memory'), h('th', { class: 'n' }, 'CPU')),
-        o.runs.map((r) => h('tr', {}, h('td', {}, r.project), h('td', {}, r.title), h('td', { class: 'n' }, dur(r.secs)), h('td', { class: 'n' }, mb(r.rssKb)), h('td', { class: 'n' }, r.cpu.toFixed(1) + '%')))))
+        o.runs.map((r) => h('tr', {}, h('td', {}, r.project + (r.agent ? ` / ${r.agent}` : '')), h('td', {}, r.title), h('td', { class: 'n' }, dur(r.secs)), h('td', { class: 'n' }, mb(r.rssKb)), h('td', { class: 'n' }, r.cpu.toFixed(1) + '%')))))
         : h('div', { class: 'muted' }, 'Nothing is running.'),
       h('h2', {}, 'Log'), log,
     );
@@ -164,6 +169,25 @@ async function overview() {
   };
   await draw();
   timer = setInterval(() => { if (!document.hidden) draw().catch(fail); }, 5000);
+}
+
+// Each project and its agents: who leads, how each shows in Slack, who is working.
+function projectsBlock(list) {
+  if (!list.length) return null;
+  return h('div', {},
+    h('h2', {}, 'Projects and agents'),
+    h('div', { class: 'stack' }, list.map((p) => h('div', { class: 'card' },
+      h('div', { class: 'head' }, h('h3', {}, p.name),
+        h('span', { class: 'muted' }, [`${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}`, p.lead ? `led by ${p.lead}` : '', `${p.running} running`].filter(Boolean).join(' · '))),
+      p.agents.length
+        ? h('div', { class: 'wrap' }, h('table', {},
+          h('tr', {}, h('th', {}, 'Agent'), h('th', {}, 'Role'), h('th', {}, 'In Slack'), h('th', {}, 'Now')),
+          p.agents.map((a) => h('tr', {},
+            h('td', { style: 'white-space:nowrap' }, h('b', {}, a.name), a.agent !== a.name ? h('span', { class: 'muted' }, ` (${a.agent})`) : null),
+            h('td', {}, [a.lead ? 'lead' : '', a.default ? 'default' : '', a.description || ''].filter(Boolean).join(' · ')),
+            h('td', { class: a.appMissing ? 'warn' : '' }, a.slack),
+            h('td', { style: 'white-space:nowrap' }, h('span', { class: 'dot ' + (a.running ? 'ok' : '') }), a.running ? `working (${a.running})` : 'idle')))))
+        : h('div', { class: 'muted' }, 'No agents: tasks run as plain Claude Code. Add them in Projects.')))));
 }
 
 // ---- projects, schedules, watches, settings (edits config.json) ----
@@ -177,7 +201,7 @@ function field(obj, key, label, kind = 'text', opts = {}) {
   if (kind === 'textarea') input = h('textarea', { rows: opts.rows || 3, oninput: (e) => set(e.target.value) }, get() ?? '');
   else if (kind === 'select') input = h('select', { onchange: (e) => set(e.target.value) }, (opts.blank ? [''] : []).concat(opts.options).map((o) => h('option', { value: o, selected: (get() ?? opts.def) === o }, o || '(none)')));
   else if (kind === 'number') input = h('input', { type: 'number', value: get() ?? '', placeholder: opts.placeholder, oninput: (e) => set(e.target.value === '' ? '' : Number(e.target.value)) });
-  else if (kind === 'list') input = h('input', { value: (get() || []).join(', '), placeholder: opts.placeholder, oninput: (e) => set(e.target.value.split(/[\s,]+/).filter(Boolean)) });
+  else if (kind === 'list') input = h('input', { value: [].concat(get() ?? []).join(', '), placeholder: opts.placeholder, oninput: (e) => set(e.target.value.split(/[\s,]+/).filter(Boolean)) });
   else if (kind === 'json') {
     input = h('textarea', { rows: opts.rows || 4, oninput: (e) => {
       const t = e.target.value.trim();
@@ -205,10 +229,50 @@ async function projects() {
   const names = () => Object.keys(cfg.projects);
   const errBox = h('div');
   const rerender = () => { draw(); markDirty(); };
+  // A project's agents: add, edit and remove them, and pick the lead and the default.
+  const agentsBlock = (p) => {
+    const agents = p.agents ?? {};
+    const keys = Object.keys(agents);
+    const add = h('input', { placeholder: 'new agent, like qa' });
+    return h('div', { class: 'full agents' },
+      h('h4', {}, `Agents (${keys.length})`),
+      keys.length
+        ? h('div', { class: 'row' },
+          field(p, 'lead', 'Lead (plans the work and runs the team)', 'select', { options: keys, blank: true }),
+          field(p, 'defaultAgent', 'Default agent (tasks that tag nobody)', 'select', { options: keys, blank: true }))
+        : h('div', { class: 'muted' }, 'No agents yet: tasks run as plain Claude Code.'),
+      keys.map((k) => {
+        const a = agents[k];
+        return h('div', { class: 'agent' },
+          h('div', { class: 'head' }, h('b', {}, k + (p.lead === k ? '  · lead' : '') + (p.defaultAgent === k ? '  · default' : '')),
+            h('button', { class: 'b d', onclick: () => {
+              delete agents[k];
+              if (!Object.keys(agents).length) delete p.agents;
+              if (p.lead === k) delete p.lead;
+              if (p.defaultAgent === k) delete p.defaultAgent;
+              rerender();
+            } }, 'Remove')),
+          h('div', { class: 'row' },
+            field(a, 'agent', 'Claude Code agent (.claude/agents/<name>.md)', 'text', { placeholder: k }),
+            field(a, 'description', 'What it does'),
+            field(a, 'skills', 'Skills folders', 'list', { placeholder: `.claude/roles/${k}` }),
+            field(a, 'slackApp', 'Own Slack app', 'text', { placeholder: 'empty: posts as beckon · main: is beckon' }),
+            field(a, 'channels', 'Takes new tasks in channels', 'list', { placeholder: 'none' }),
+            field(a, 'model', 'Model', 'text', { placeholder: 'from the agent file' })));
+      }),
+      h('div', { class: 'head', style: 'margin-top:8px' }, add, h('button', { class: 'b', onclick: () => {
+        const k = add.value.trim();
+        if (!/^[a-z0-9][a-z0-9_-]*$/i.test(k)) return toast('Agent names use letters, digits, dash and underscore.');
+        if (keys.some((x) => x.toLowerCase() === k.toLowerCase())) return toast('That name is taken.');
+        p.agents = { ...agents, [k]: {} };
+        rerender();
+      } }, 'Add agent')));
+  };
   const draw = () => {
     const proj = names().map((n) => {
       const p = cfg.projects[n];
-      return card(n + (cfg.defaultProject === n || (!cfg.defaultProject && names().length === 1) ? '  · default' : ''),
+      const count = Object.keys(p.agents ?? {}).length;
+      return card(n + (cfg.defaultProject === n || (!cfg.defaultProject && names().length === 1) ? '  · default' : '') + (count ? `  · ${count} agent${count === 1 ? '' : 's'}` : ''),
         () => { if (confirm(`Remove project "${n}" from beckon? The repository is not touched.`)) { delete cfg.projects[n]; if (cfg.defaultProject === n) delete cfg.defaultProject; rerender(); } },
         field(p, 'path', 'Folder (git repository)', 'text', { placeholder: '~/code/myapp' }),
         field(p, 'channels', 'Channels', 'list', { placeholder: '#myapp, C0123ABC' }),
@@ -219,16 +283,17 @@ async function projects() {
         field(p, 'mcpConfig', 'Extra MCP config', 'text', { placeholder: '~/.beckon/mcp-screen.json' }),
         field(p, 'instructions', 'Instructions for Claude', 'textarea', { full: true, rows: 4 }),
         field(p, 'alwaysAsk', 'Always ask (JSON list of regexes or { tool, match, label })', 'json', { full: true }),
+        agentsBlock(p),
       );
     });
     const newName = h('input', { placeholder: 'new project name' });
     const sched = cfg.schedules.map((s, i) => card(s.name || `schedule ${i + 1}`, () => { cfg.schedules.splice(i, 1); rerender(); },
       field(s, 'name', 'Name'), field(s, 'cron', 'Cron', 'text', { placeholder: '0 8 * * 1-5' }), field(s, 'timezone', 'Time zone', 'text', { placeholder: 'UTC' }),
-      field(s, 'project', 'Project', 'select', { options: names() }), field(s, 'channel', 'Channel or member ID'),
+      field(s, 'project', 'Project', 'select', { options: names() }), field(s, 'agent', 'Agent', 'select', { options: Object.keys(cfg.projects[s.project]?.agents ?? {}), blank: true }), field(s, 'channel', 'Channel or member ID'),
       field(s, 'prompt', 'Prompt', 'textarea', { full: true, rows: 4 })));
     const watches = cfg.watches.map((w, i) => card(w.name || w.channel || `watch ${i + 1}`, () => { cfg.watches.splice(i, 1); rerender(); },
       field(w, 'name', 'Name'), field(w, 'channel', 'Channel', 'text', { placeholder: '#myapp-alerts' }),
-      field(w, 'project', 'Project', 'select', { options: names() }), field(w, 'match', 'Match (regex, case ignored)', 'text', { placeholder: ':red_circle:|ERROR' }),
+      field(w, 'project', 'Project', 'select', { options: names() }), field(w, 'agent', 'Agent', 'select', { options: Object.keys(cfg.projects[w.project]?.agents ?? {}), blank: true }), field(w, 'match', 'Match (regex, case ignored)', 'text', { placeholder: ':red_circle:|ERROR' }),
       field(w, 'from', 'Only from (bot names or IDs)', 'list', { placeholder: 'anyone' }), field(w, 'cooldownMinutes', 'Cooldown (minutes)', 'number', { placeholder: '60' }),
       field(w, 'prompt', 'Prompt (empty: investigate only)', 'textarea', { full: true, rows: 3 })));
     show(
