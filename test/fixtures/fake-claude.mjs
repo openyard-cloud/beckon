@@ -8,6 +8,7 @@
 //   TABS            open a browser tab, then close it only when the Stop hook asks
 //   SECRET          ask beckon for a password with bin/beckon-secret.mjs and report the result
 //   SECRETRUN       ask beckon for a value for a command (--file --run) and report its output
+//   SUBAGENTS       as the lead: start dev and qa as subagents, then report
 //   TEAMPLAN        as pm: assign dev and qa; once they have finished, report
 //   PINGPONG        answer as the --agent, then tag the other of dev and qa with PINGPONG
 //   anything else   reply "echo: <prompt>"
@@ -103,7 +104,18 @@ if (run || perm) {
 } else {
   emit({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } });
   const me = opt('--agent');
-  const lead = me === 'pm' && /have finished/.test(prompt) ? 'All done, checked.' : me === 'pm' && /TEAMPLAN/.test(prompt) ? 'Plan:\n@dev build it\nwith care\n\n@qa check it' : null;
+  if (/SUBAGENTS/.test(prompt)) {
+    // the lead starts two project agents as subagents, which run in the background and report
+    emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-dev', subagent_type: 'senior-dev', description: 'Build the page' });
+    emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-qa', subagent_type: 'qa', description: 'Check the page' });
+    emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-x', subagent_type: 'Explore', description: 'Look around' });
+    emit({ type: 'assistant', parent_tool_use_id: 'tu-dev', message: { content: [{ type: 'text', text: 'Working on it' }] } });
+    emit({ type: 'assistant', parent_tool_use_id: 'tu-dev', message: { content: [{ type: 'text', text: 'Built the page in PR #7.\nAsk @qa to check it.' }] } });
+    emit({ type: 'assistant', parent_tool_use_id: 'tu-qa', message: { content: [{ type: 'text', text: 'Checked: 3 of 3 pass.' }] } });
+    emit({ type: 'system', subtype: 'task_notification', tool_use_id: 'tu-dev', status: 'completed' });
+    emit({ type: 'system', subtype: 'task_notification', tool_use_id: 'tu-qa', status: 'completed' });
+  }
+  const lead = /SUBAGENTS/.test(prompt) ? 'Team done: page built and checked.' : me === 'pm' && /have finished/.test(prompt) ? 'All done, checked.' : me === 'pm' && /TEAMPLAN/.test(prompt) ? 'Plan:\n@dev build it\nwith care\n\n@qa check it' : null;
   const result = lead ?? (/PINGPONG/.test(prompt) ? `done by ${me}\n@${me === 'qa' ? 'dev' : 'qa'} PINGPONG` : `echo: ${prompt.trim()}`);
   emit({ type: 'result', subtype: 'success', is_error: false, result, num_turns: 1 });
 }

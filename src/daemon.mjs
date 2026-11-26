@@ -857,7 +857,8 @@ export class Beckon {
       const list = others.map((n) => `@${n}${project.agents[n].description ? ` (${project.agents[n].description})` : ''}`).join(', ');
       if (project.lead && others.length) {
         if (agent.name === project.lead) {
-          lines.push(`- You lead this project's team: ${list}. A person gives you the work; you plan it and get it done through the team, without asking the person to pass anything on. Break the request into tasks and assign them by ending your message with one line per task that starts with the tag, like "@${others[0]} <the task, with what it needs to know>". They run one after another in the order you write them, in this thread and worktree, and each sees the conversation so far, so order them (for example design, then code, then testing). When they have all finished you get their reports: check them, then assign what comes next (for example @qa after the code, or the fixes for what testing found), or, when the work is done and checked, write the final report for the person, with no tags. Do your own part (understanding the request, specs, decisions, numbers) yourself, and leave code, design and testing to the team. Ask the person only for decisions that are really theirs: then end the turn with the question and no tags.`);
+          const team = others.map((n) => `${n} (subagent_type "${project.agents[n].agent}"${project.agents[n].description ? `: ${project.agents[n].description}` : ''})`).join(', ');
+          lines.push(`- You lead this project's team: ${team}. A person gives you the work; you plan it and get it done through the team, without asking the person to pass anything on. Give each task to a member with the Agent tool and its subagent_type, with everything it needs in the prompt: the request, the spec or files, what to do and what to report (and that risky actions wait for the person's Allow button in Slack, which is normal). Start tasks that do not depend on each other in the same message, so they run at the same time; they share this worktree, so never run two at once that edit the same files, and start a task that needs another's result (testing after the code) once that result is in. Each member's report is posted to the Slack thread under its own name. Check the reports, give out what comes next (the fixes for what testing found, then testing again), and when the work is done and checked, write the final report for the person. Do your own part (understanding the request, specs, decisions, numbers) yourself, and leave code, design and testing to the team. Ask the person only for decisions that are really theirs: then end the turn with the question.`);
         } else if (String(user).startsWith('agent:')) {
           lines.push(`- You are on a team led by @${project.lead}, which gave you this task (above). Do it fully, then report what you did, what you found and what is left. Do not tag other agents: @${project.lead} reads your report and decides what comes next. If something needs a decision only a person can make, say so in your report.`);
         } else {
@@ -974,7 +975,9 @@ export class Beckon {
     });
     const agent = this.agentOf(t, project);
     const pluginDirs = [];
-    for (const dir of agent?.skills ?? []) {
+    // The lead runs the team as subagents in its own session, so it loads every member's skills.
+    const skillDirs = agent && project.lead === agent.name ? [...new Set(Object.values(project.agents).flatMap((a) => a.skills))] : agent?.skills ?? [];
+    for (const dir of skillDirs) {
       const full = isAbsolute(dir) ? dir : join(t.worktree, dir);
       if (existsSync(full)) pluginDirs.push(full);
       else if (!run.progress.tasks.some((x) => x.id === `skills:${dir}`)) {
@@ -1008,6 +1011,7 @@ export class Beckon {
       onEvent: (e) => {
         run.tabs?.push(e);
         if (run.progress.push(e)) this.refresh(key);
+        this.trackSubagent(key, run, project, e).catch((err) => this.log(`Subagent message in ${key} failed: ${err.message}`));
       },
     });
     if (res.sessionId) t.started = true;
@@ -1038,6 +1042,40 @@ export class Beckon {
       this.state.save();
       this.enqueue(key, { text: task || `Continue from the ${from.name} agent's message above.`, user: `agent:${from.name}` });
       return;
+    }
+  }
+
+  // A project agent started as a subagent in this run (the lead giving it a task) gets a message
+  // of its own in the thread, under its own name: "working on ..." while it runs, then its report.
+  async trackSubagent(key, run, project, e) {
+    const t = this.state.threads[key];
+    run.subs ??= new Map();
+    if (e.type === 'system' && e.subtype === 'task_started' && e.subagent_type && e.tool_use_id) {
+      const agent = Object.values(project?.agents ?? {}).find((a) => a.agent === e.subagent_type || a.name === e.subagent_type);
+      if (!agent) return;
+      const sub = { agent, description: e.description || e.subagent_type, text: '' };
+      run.subs.set(e.tool_use_id, sub);
+      const label = `:hourglass_flowing_sand: ${sub.description}`;
+      sub.posted = this.post(t.channel, t.threadTs, `${sub.description}…`, [{ type: 'context', elements: [{ type: 'mrkdwn', text: label }] }], agent).catch(() => null);
+      return;
+    }
+    if (e.type === 'assistant' && e.parent_tool_use_id && run.subs.has(e.parent_tool_use_id)) {
+      const text = (e.message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
+      if (text) run.subs.get(e.parent_tool_use_id).text = text;
+      return;
+    }
+    if (e.type === 'system' && e.subtype === 'task_notification' && run.subs.has(e.tool_use_id)) {
+      const sub = run.subs.get(e.tool_use_id);
+      if (sub.done) return;
+      sub.done = true;
+      const posted = await sub.posted;
+      const body = sub.text || (e.status === 'completed' ? 'Done.' : `Stopped (${e.status}).`);
+      const pieces = chunkMarkdown(emphasizeSummary(this.linkAgents(body, project)));
+      const blocks = [{ type: 'context', elements: [{ type: 'mrkdwn', text: `${e.status === 'completed' ? ':white_check_mark:' : ':warning:'} ${sub.description}` }] }, { type: 'markdown', text: pieces[0] }];
+      const summary = oneLine(firstLine(body), 300);
+      if (posted?.ts) await this.slackFor(t.channel, sub.agent).call('chat.update', { channel: t.channel, ts: posted.ts, text: summary, blocks });
+      else await this.post(t.channel, t.threadTs, summary, blocks, sub.agent);
+      for (const piece of pieces.slice(1)) await this.post(t.channel, t.threadTs, oneLine(piece, 300), [{ type: 'markdown', text: piece }], sub.agent);
     }
   }
 
@@ -1127,7 +1165,7 @@ export class Beckon {
     const project = this.config.projects[t.project];
     let text = (run.reply ?? '').trim();
     // The lead's report at the end of team work: let the person who asked know.
-    if (project?.lead && t.agent === project.lead && t.leadRun && text && run.status === 'done' && !this.assignments(text, project, project.lead).length && /^[UW][A-Z0-9]+$/.test(t.createdBy ?? '')) {
+    if (project?.lead && t.agent === project.lead && (t.leadRun || run.subs?.size) && text && run.status === 'done' && !this.assignments(text, project, project.lead).length && /^[UW][A-Z0-9]+$/.test(t.createdBy ?? '')) {
       text = `<@${t.createdBy}> ${text}`;
     }
     const reply = this.linkAgents(text, project);
