@@ -95,7 +95,12 @@ fn main() {
         return tray::run(home, token);
     }
     let server = Server::http(&listen).unwrap_or_else(|e| die(&format!("cannot listen on {listen}: {e}")));
-    eprintln!("beckon-ui: open {}", link(&listen, &token));
+    // The link carries the token: print it to a terminal, never into a log file.
+    if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        eprintln!("beckon-ui: open {}", link(&listen, &token));
+    } else {
+        eprintln!("beckon-ui: serving on {listen}; `beckon-ui url` prints the link");
+    }
     let mut app = App::new(home, token);
     for req in server.incoming_requests() {
         app.handle(req);
