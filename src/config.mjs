@@ -118,6 +118,8 @@ export function validateConfig(raw) {
       for (const key of ['baseBranch', 'model', 'setup', 'instructions', 'mcpConfig']) {
         if (p[key] !== undefined && typeof p[key] !== 'string') errors.push(`${at}.${key}: must be a string`);
       }
+      const agents = agentsConfig(p.agents, at, isStringArray(channels) ? channels : [], errors);
+      if (p.defaultAgent !== undefined && !agents[p.defaultAgent]) errors.push(`${at}.defaultAgent: "${p.defaultAgent}" is not one of this project's agents`);
       projects[name] = {
         name,
         path,
@@ -129,6 +131,8 @@ export function validateConfig(raw) {
         setup: p.setup ?? null,
         instructions: p.instructions ?? null,
         mcpConfig: typeof p.mcpConfig === 'string' ? expandHome(p.mcpConfig) : null,
+        agents,
+        defaultAgent: typeof p.defaultAgent === 'string' && agents[p.defaultAgent] ? p.defaultAgent : null,
       };
     }
   }
@@ -146,13 +150,14 @@ export function validateConfig(raw) {
       if (typeof s[key] !== 'string' || !s[key]) errors.push(`${at}.${key}: required`);
     }
     if (s.project && !projects[s.project]) errors.push(`${at}.project: "${s.project}" is not one of the projects`);
+    checkAgentRef(s.agent, projects[s.project], at, errors);
     const timezone = s.timezone ?? 'UTC';
     try {
       new Intl.DateTimeFormat('en-US', { timeZone: timezone });
     } catch {
       errors.push(`${at}.timezone: "${timezone}" is not a known time zone`);
     }
-    schedules.push({ name: s.name ?? `schedule ${i + 1}`, cron: s.cron, timezone, project: s.project, channel: s.channel, prompt: s.prompt });
+    schedules.push({ name: s.name ?? `schedule ${i + 1}`, cron: s.cron, timezone, project: s.project, channel: s.channel, prompt: s.prompt, agent: typeof s.agent === 'string' ? s.agent : null });
   }
 
   // Channels where a new alert starts an investigation on its own, without a mention.
@@ -166,6 +171,7 @@ export function validateConfig(raw) {
       if (typeof w[key] !== 'string' || !w[key]) errors.push(`${at}.${key}: required`);
     }
     if (w.project && !projects[w.project]) errors.push(`${at}.project: "${w.project}" is not one of the projects`);
+    checkAgentRef(w.agent, projects[w.project], at, errors);
     if (typeof w.match === 'string' && w.match) checkRegex(w.match, `${at}.match`, errors);
     if (w.from !== undefined && !isStringArray(w.from)) errors.push(`${at}.from: a list of bot IDs, member IDs or bot names`);
     if (w.prompt !== undefined && typeof w.prompt !== 'string') errors.push(`${at}.prompt: must be a string`);
@@ -182,6 +188,7 @@ export function validateConfig(raw) {
       from: isStringArray(w.from) ? w.from : null,
       prompt: typeof w.prompt === 'string' && w.prompt ? w.prompt : null,
       cooldownMinutes: cooldown,
+      agent: typeof w.agent === 'string' ? w.agent : null,
     });
   }
 
@@ -199,6 +206,8 @@ export function validateConfig(raw) {
     watches,
     approvalTimeoutMinutes: num('approvalTimeoutMinutes', 60, 1, 1440),
     maxParallel: num('maxParallel', 3, 1, 20),
+    // Agents handing a thread to each other: at most this many in a row without a person's message.
+    maxHandoffs: num('maxHandoffs', 3, 0, 10),
     keepDays: num('keepDays', 7, 1, 365),
     shutdownGraceMinutes: num('shutdownGraceMinutes', 30, 0, 240),
     claudePath: typeof raw.claudePath === 'string' ? expandHome(raw.claudePath) : 'claude',
@@ -206,6 +215,64 @@ export function validateConfig(raw) {
     secretRelay: secretRelayConfig(raw.secretRelay, errors),
   };
   return { config, errors };
+}
+
+export const AGENT_NAME = /^[a-z0-9][a-z0-9_-]*$/i;
+const AGENT_ICONS = { pm: ':clipboard:', dev: ':hammer_and_wrench:', designer: ':art:', design: ':art:', qa: ':mag:' };
+
+// A project's agents: the roles a task can be given to, like pm, dev, designer and qa. Each runs
+// one of Claude Code's agents (`claude --agent`, defined in the repository's .claude/agents/ or in
+// ~/.claude/agents/), with its own folders of skills loaded as plugins (`--plugin-dir`).
+function agentsConfig(raw, at, projectChannels, errors) {
+  const agents = {};
+  if (raw === undefined) return agents;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    errors.push(`${at}.agents: an object like { "qa": { "agent": "qa", "skills": ".claude/roles/qa" } }`);
+    return agents;
+  }
+  const lower = new Map();
+  for (const [key, a] of Object.entries(raw)) {
+    const where = `${at}.agents.${key}`;
+    if (!AGENT_NAME.test(key)) errors.push(`${where}: agent names may use letters, digits, dash and underscore`);
+    if (lower.has(key.toLowerCase())) errors.push(`${where}: "${lower.get(key.toLowerCase())}" already uses this name (names ignore case)`);
+    lower.set(key.toLowerCase(), key);
+    if (!a || typeof a !== 'object' || Array.isArray(a)) {
+      errors.push(`${where}: must be an object; {} runs the Claude Code agent of the same name`);
+      continue;
+    }
+    for (const k of ['agent', 'description', 'model', 'displayName', 'icon']) {
+      if (a[k] !== undefined && (typeof a[k] !== 'string' || !a[k])) errors.push(`${where}.${k}: must be a string`);
+    }
+    if (typeof a.agent === 'string' && a.agent && !/^[a-z0-9][a-z0-9_:-]*$/i.test(a.agent)) errors.push(`${where}.agent: the name of a Claude Code agent, like "qa"`);
+    if (typeof a.icon === 'string' && a.icon && !/^:[a-z0-9_+-]+:$/i.test(a.icon) && !/^https:\/\//.test(a.icon)) errors.push(`${where}.icon: an emoji like ":mag:" or an https image address`);
+    const skills = a.skills === undefined ? [] : typeof a.skills === 'string' ? [a.skills] : a.skills;
+    if (!isStringArray(skills)) errors.push(`${where}.skills: a folder of skills (it holds skills/<name>/SKILL.md), or a list of them; relative to the repository, or absolute`);
+    if (a.permissionMode !== undefined && !PERMISSION_MODES.includes(a.permissionMode)) errors.push(`${where}.permissionMode: one of ${PERMISSION_MODES.join(', ')}`);
+    const channels = a.channels ?? [];
+    if (!isStringArray(channels)) errors.push(`${where}.channels: a list of this project's channels where this agent takes new tasks`);
+    for (const c of isStringArray(channels) ? channels : []) {
+      if (!projectChannels.includes(c)) errors.push(`${where}.channels: ${c} is not one of this project's channels`);
+    }
+    agents[key] = {
+      name: key,
+      agent: typeof a.agent === 'string' && a.agent ? a.agent : key,
+      description: typeof a.description === 'string' ? a.description : null,
+      // How its messages appear in Slack (needs the chat:write.customize scope).
+      displayName: typeof a.displayName === 'string' && a.displayName ? a.displayName : key.length <= 3 ? key.toUpperCase() : key[0].toUpperCase() + key.slice(1),
+      icon: typeof a.icon === 'string' && a.icon ? a.icon : AGENT_ICONS[key.toLowerCase()] ?? ':robot_face:',
+      skills: isStringArray(skills) ? skills.map(expandHome) : [],
+      model: typeof a.model === 'string' && a.model ? a.model : null,
+      permissionMode: PERMISSION_MODES.includes(a.permissionMode) ? a.permissionMode : null,
+      channels: isStringArray(channels) ? channels : [],
+    };
+  }
+  return agents;
+}
+
+function checkAgentRef(agent, project, at, errors) {
+  if (agent === undefined) return;
+  if (typeof agent !== 'string' || !agent) errors.push(`${at}.agent: the name of one of the project's agents`);
+  else if (project && !project.agents[agent]) errors.push(`${at}.agent: "${agent}" is not one of the agents of project "${project.name}"`);
 }
 
 // Secret handoff (src/secrets.mjs) through your own relay on Cloudflare (relay/). Off unless

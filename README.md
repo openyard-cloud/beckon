@@ -96,6 +96,41 @@ A thread keeps the project its first message picked. Replies in it go to the sam
 
 The simplest setup is one channel per project (`#myapp-agent`, `#website-agent`) and your busiest project as the default for DMs.
 
+### Agents: PM, dev, designer, QA
+
+A project can have a team of agents, each a role with its own instructions, tools and skills: for example `pm`, `dev`, `designer` and `qa`. They work in the project's channel, each under its own name and icon, and know about each other. Tag one to give it a task:
+
+```
+@pm write the spec for club rankings by month
+@qa check the booking flow on the web app
+```
+
+In a project's channel, a message that starts with an agent's tag goes to that agent without mentioning beckon. `@beckon qa: ...` and `@beckon pickcourt: qa: ...` work too, also from other channels and DMs. Without a tag, a task goes to the agent of the channel (an agent's `channels`), else to the project's `defaultAgent`, else to plain Claude Code.
+
+**Agents hand work to each other.** An agent that finishes its part and ends its answer with a line like `@qa check the booking flow in PR #412` gives the thread to that agent, which carries on in the same session and worktree. So `@pm` can write a spec and hand it to `@dev`, who opens the pull request and hands it to `@qa`. To stop agents passing work back and forth forever, beckon allows `maxHandoffs` (default 3) hand-overs in a row; then it waits for a person. Any message from a person starts the count again, and a reply that starts with a tag hands the thread to that agent.
+
+Each agent runs one of Claude Code's own agents (`claude --agent <name>`): a file in the repository's `.claude/agents/` (or in `~/.claude/agents/`) with the role's prompt, its tools and its model. Its `skills` are folders that hold `skills/<name>/SKILL.md`; beckon loads each one as a plugin for that agent's runs only (`--plugin-dir`), so a skill for QA is not in the PM's way. Keep both in the repository, so the team edits them in pull requests:
+
+```jsonc
+"projects": {
+  "myapp": {
+    "path": "~/code/myapp",
+    "channels": ["#myapp", "#myapp-design"],
+    "agents": {
+      "pm":       { "description": "specs, priorities, product numbers", "skills": ".claude/roles/pm" },
+      "dev":      { "agent": "senior-dev", "skills": ".claude/roles/dev" },  // agent: the file's name, if it differs
+      "designer": { "skills": ".claude/roles/designer", "channels": ["#myapp-design"] },
+      "qa":       { "skills": ".claude/roles/qa", "model": "sonnet", "icon": ":test_tube:" }
+    },
+    "defaultAgent": "dev"
+  }
+}
+```
+
+An agent can also set its own `model`, `permissionMode`, `displayName` (default: `PM`, `DEV`, `QA`, `Designer`) and `icon` (an emoji or an https image; defaults for pm, dev, designer and qa). Schedules and watches take an `agent` too, like a morning report from `pm` or alert investigations by `dev`; without one, they use the project's `defaultAgent`. An agent file must list the `Skill` tool in its `tools` (or leave `tools` out) to use its skills.
+
+Agents post under their own name and icon when beckon's Slack app has the `chat:write.customize` scope. Apps made from an older manifest lack it: add it under *OAuth & Permissions > Bot Token Scopes* and reinstall the app. Until then agents post as beckon, with the agent's name above the answer.
+
 ### Managing projects from Slack
 
 Mention beckon with one of these, or send it in a DM. Only the members in `users` can use them. Each one edits `~/.beckon/config.json` and takes effect at once, without a restart.
@@ -306,6 +341,8 @@ Limits:
       "setup": "npm ci",                  // optional, runs once in each new worktree
       "instructions": "Open PRs as drafts.", // optional, added to Claude's system prompt
       "mcpConfig": "~/.beckon/mcp-screen.json", // optional, extra MCP servers for this project's runs
+      "agents": { "qa": { "skills": ".claude/roles/qa" } }, // optional, see "Agents"
+      "defaultAgent": "qa",              // optional
       "alwaysAsk": [
         "playwright test",                // a regex on Bash commands
         { "tool": "^(Edit|Write)$", "match": "migrations/", "label": "edit a migration" }
@@ -320,7 +357,8 @@ Limits:
       "timezone": "Asia/Ho_Chi_Minh",
       "project": "myapp",
       "channel": "#myapp",                // or your member ID for a DM
-      "prompt": "Summarize yesterday's merged PRs, failing CI runs and open incidents."
+      "prompt": "Summarize yesterday's merged PRs, failing CI runs and open incidents.",
+      "agent": "qa"                     // optional, one of the project's agents
     }
   ],
   "watches": [                            // see "Watching an alert channel"
@@ -336,6 +374,7 @@ Limits:
   ],
   "approvalTimeoutMinutes": 60,
   "maxParallel": 3,                       // runs at once; more wait in a queue
+  "maxHandoffs": 3,                       // agents handing a thread on, in a row, before a person must reply
   "keepDays": 7,                          // idle worktrees are removed after this
   "claudePath": "claude",
   "allowApiKey": false                    // true keeps ANTHROPIC_API_KEY for claude

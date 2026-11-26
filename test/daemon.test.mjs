@@ -618,3 +618,112 @@ test('a watch can be limited to some senders, and a mention in the channel is st
   assert.equal(Object.keys(state.threads).length, 2);
   await close();
 });
+
+test('a project agent takes tasks by name, by channel or by default, and a thread can be handed on', async () => {
+  const { beckon, slack, state, claudeRuns, done, close } = await setup({
+    config: {
+      projects: {
+        proj: {
+          path: '/tmp',
+          channels: ['#proj', 'CDESIGN'],
+          agents: {
+            dev: { agent: 'senior-dev', skills: '.claude/roles/dev', description: 'builds it' },
+            qa: { skills: ['.claude/roles/qa', '/nowhere/skills'] },
+            designer: { channels: ['CDESIGN'], model: 'opus' },
+          },
+          defaultAgent: 'dev',
+        },
+        other: { path: '/tmp', channels: [] },
+      },
+    },
+  });
+  // the worktrees exist only once a run starts; make the qa skills folder in them on creation
+  const origEnsure = beckon.ensureWorktree;
+  beckon.ensureWorktree = async (o) => {
+    const r = await origEnsure(o);
+    mkdirSync(join(o.dir, '.claude/roles/qa'), { recursive: true });
+    return r;
+  };
+  const named = mention('QA: check the booking flow');
+  await beckon.handleEvent(named);
+  await done();
+  let run = claudeRuns().at(-1);
+  assert.equal(run.argv[run.argv.indexOf('--agent') + 1], 'qa');
+  const dirs = run.argv.flatMap((a, i) => (a === '--plugin-dir' ? [run.argv[i + 1]] : []));
+  assert.equal(dirs.length, 1, 'a skills folder that is not there is left out');
+  assert.ok(dirs[0].endsWith(join('.claude', 'roles', 'qa')) && dirs[0].includes(join('wt', 'proj')));
+  assert.ok(slack.texts().includes('echo: check the booking flow'), 'the name is not part of the task');
+  assert.ok(slack.posts().some((p) => p.blocks?.some((b) => b.type === 'context' && /\*qa\* agent/.test(b.elements[0].text))));
+  const prompt = run.argv[run.argv.indexOf('--append-system-prompt') + 1];
+  assert.match(prompt, /project's \*qa\* agent/);
+  assert.match(prompt, /other agents work in the same Slack channel: @dev \(builds it\), @designer/);
+
+  // a reply that names another agent hands the thread over, same session
+  await beckon.handleEvent(msg({ text: 'dev: fix what QA found', thread_ts: named.ts }));
+  await done();
+  run = claudeRuns().at(-1);
+  assert.equal(run.argv[run.argv.indexOf('--agent') + 1], 'senior-dev');
+  assert.ok(run.argv.includes('--resume'));
+  assert.equal(state.threads[`CPROJ:${named.ts}`].agent, 'dev');
+  assert.ok(slack.texts().includes('echo: fix what QA found'));
+
+  // no name: the project's default agent; in #design, the designer
+  await beckon.handleEvent(mention('just do it'));
+  await done();
+  run = claudeRuns().at(-1);
+  assert.equal(run.argv[run.argv.indexOf('--agent') + 1], 'senior-dev');
+  await beckon.handleEvent(mention('make it pretty', { channel: 'CDESIGN' }));
+  await done();
+  run = claudeRuns().at(-1);
+  assert.equal(run.argv[run.argv.indexOf('--agent') + 1], 'designer');
+  assert.equal(run.argv[run.argv.indexOf('--model') + 1], 'opus');
+
+  // a project without agents runs plain Claude Code
+  await beckon.handleEvent(mention('other: hello'));
+  await done();
+  run = claudeRuns().at(-1);
+  assert.ok(!run.argv.includes('--agent'));
+  await close();
+});
+
+test('agents are tagged with @name, post under their own name, and hand a thread on at most maxHandoffs times in a row', async () => {
+  const { beckon, slack, state, claudeRuns, done, close } = await setup({
+    config: {
+      projects: { proj: { path: '/tmp', channels: ['#proj'], agents: { dev: {}, qa: { icon: ':test_tube:' } } } },
+      maxHandoffs: 3,
+    },
+  });
+  try {
+    // a plain message in the channel that tags an agent is a task; one that tags nobody is not
+    await beckon.handleEvent(msg({ text: 'just chatting' }));
+    const tagged = msg({ text: '@qa check the login page' });
+    await beckon.handleEvent(tagged);
+    await done();
+    assert.equal(claudeRuns().length, 1);
+    assert.equal(state.threads[`CPROJ:${tagged.ts}`].agent, 'qa');
+    assert.ok(slack.texts().includes('echo: check the login page'));
+    const answer = slack.posts().find((p) => p.text === 'echo: check the login page');
+    assert.equal(answer.username, 'QA');
+    assert.equal(answer.icon_emoji, ':test_tube:');
+
+    // dev and qa tag each other: three hand-overs, then beckon stops and says so
+    const ping = msg({ text: '@dev PINGPONG' });
+    await beckon.handleEvent(ping);
+    await waitFor(() => slack.posts().some((p) => /Not handing this to \*dev\*/.test(p.text)));
+    await done();
+    const agents = claudeRuns().slice(1).map((r) => r.argv[r.argv.indexOf('--agent') + 1]);
+    assert.deepEqual(agents, ['dev', 'qa', 'dev', 'qa']);
+    const t = state.threads[`CPROJ:${ping.ts}`];
+    assert.equal(t.handoffs, 3);
+    const handed = claudeRuns()[2];
+    assert.match(handed.argv[handed.argv.indexOf('--append-system-prompt') + 1], /from the project's dev agent, which handed this thread to you/);
+    assert.ok(slack.posts().some((p) => p.username === 'DEV' && p.text === 'done by dev'));
+
+    // a person's reply starts the count again
+    await beckon.handleEvent(msg({ text: 'thanks, carry on', thread_ts: ping.ts }));
+    await done();
+    assert.equal(t.handoffs, 0);
+  } finally {
+    await close();
+  }
+});

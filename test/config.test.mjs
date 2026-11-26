@@ -54,5 +54,39 @@ test('watches need a channel, a known project and a valid match', () => {
   });
   for (const needle of ['watches[1].project', 'watches[1].match', 'watches[1].cooldownMinutes']) assert.ok(errors.some((e) => e.includes(needle)), needle);
   assert.equal(errors.length, 3);
-  assert.deepEqual(config.watches[0], { name: '#alerts alerts', channel: '#alerts', project: 'a', match: 'LỖI', from: null, prompt: null, cooldownMinutes: 60 });
+  assert.deepEqual(config.watches[0], { name: '#alerts alerts', channel: '#alerts', project: 'a', match: 'LỖI', from: null, prompt: null, cooldownMinutes: 60, agent: null });
+});
+
+test('project agents: names, skills folders, channels of the project, and references from schedules and watches', () => {
+  const { errors, config } = validateConfig({
+    users: ['U1'],
+    projects: {
+      a: {
+        path: '/a',
+        channels: ['#a', '#design'],
+        agents: {
+          pm: { skills: '~/skills/pm', description: 'plans' },
+          dev: { agent: 'senior-dev' },
+          Dev: {},
+          'bad name': {},
+          qa: { skills: [1], channels: ['#elsewhere'], permissionMode: 'yolo' },
+          designer: { channels: ['#design'] },
+        },
+        defaultAgent: 'nobody',
+      },
+    },
+    schedules: [{ cron: '0 8 * * *', project: 'a', channel: '#a', prompt: 'report', agent: 'pm' }],
+    watches: [{ channel: '#a', project: 'a', match: 'x', agent: 'ghost' }],
+  });
+  for (const needle of ['agents.Dev: "dev" already', 'agents.bad name', 'agents.qa.skills', 'agents.qa.channels: #elsewhere', 'agents.qa.permissionMode', 'defaultAgent: "nobody"', 'watches[0].agent: "ghost"']) {
+    assert.ok(errors.some((e) => e.includes(needle)), `${needle} in ${JSON.stringify(errors)}`);
+  }
+  assert.equal(errors.length, 7);
+  const a = config.projects.a.agents;
+  assert.equal(a.pm.skills[0], join(homedir(), 'skills/pm'));
+  assert.equal(a.dev.agent, 'senior-dev');
+  assert.equal(a.designer.agent, 'designer');
+  assert.deepEqual(a.designer.channels, ['#design']);
+  assert.equal(config.schedules[0].agent, 'pm');
+  assert.equal(config.projects.a.defaultAgent, null);
 });

@@ -271,7 +271,7 @@ async function threads() {
     const s = q.value.toLowerCase();
     body.replaceChildren(...list.filter((t) => !s || `${t.project} ${t.title}`.toLowerCase().includes(s)).map((t) => h('tr', {},
       h('td', { style: 'white-space:nowrap' }, h('span', { class: 'dot ' + (t.running ? 'ok' : ''), title: t.running ? 'running' : 'idle' }), t.project),
-      h('td', {}, t.title, t.allowAll ? h('span', { class: 'muted' }, ' · all allowed') : null, h('div', { class: 's' }, t.createdBy === 'schedule' ? 'schedule' : t.createdBy === 'watch' ? 'alert watch' : '', t.worktreeRemoved ? ' worktree removed' : '')),
+      h('td', {}, t.title, t.allowAll ? h('span', { class: 'muted' }, ' · all allowed') : null, h('div', { class: 's' }, [t.agent ? `${t.agent} agent` : '', t.createdBy === 'schedule' ? 'schedule' : t.createdBy === 'watch' ? 'alert watch' : '', t.worktreeRemoved ? 'worktree removed' : ''].filter(Boolean).join(' · '))),
       h('td', { class: 'n' }, ago(t.lastActive)),
       h('td', { class: 'n', title: `input ${t.tokens[0]} · output ${t.tokens[1]} · cache read ${t.tokens[2]} · cache write ${t.tokens[3]}` }, t.tokens[4] ? num(t.tokens[1]) : '–'),
       h('td', { class: 'n' }, t.tokens[4] ? num(total(t.tokens)) : '–'),
