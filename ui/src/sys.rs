@@ -106,8 +106,8 @@ pub fn etime_secs(s: &str) -> u64 {
 /// config check. BECKON_NODE / BECKON_REPO override; else read from the daemon's command line;
 /// else the repository this binary was built in, with `node` from PATH.
 pub fn beckon_install(daemon_args: Option<&str>) -> (String, Option<PathBuf>) {
-    let mut node = std::env::var("BECKON_NODE").ok();
-    let mut repo = std::env::var("BECKON_REPO").ok().map(PathBuf::from);
+    let mut node = std::env::var("BECKON_NODE").ok().filter(|s| !s.is_empty());
+    let mut repo = std::env::var("BECKON_REPO").ok().filter(|s| !s.is_empty()).map(PathBuf::from);
     if let Some(args) = daemon_args {
         let mut it = args.split_whitespace();
         let n = it.next();

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="125.5 72 260 369" width="24" height="34">
+  <!-- The menu bar icon: assets/logo.svg as a one-colour silhouette (a template image, which macOS
+       colours for light and dark menu bars). The logo's cream parts (visor, antenna ball) are cut
+       out; its eyes stay. Rendered to the alpha table in src/tray.rs (ICON_ALPHA), 24x34 px at 2x. -->
+  <defs>
+    <mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <path d="M164 105 v266" stroke="#fff" stroke-width="58" stroke-linecap="round" fill="none"/>
+      <path d="M164 219 h140 a72 72 0 0 1 72 72 v40 a72 72 0 0 1 -72 72 h-90 l-62 34 v-34 z" fill="#fff"/>
+      <rect x="200" y="257" width="140" height="74" rx="37" fill="#000"/>
+      <circle cx="240" cy="294" r="15" fill="#fff"/>
+      <circle cx="300" cy="294" r="15" fill="#fff"/>
+      <path d="M304 219 v-40" stroke="#fff" stroke-width="14" stroke-linecap="round"/>
+      <circle cx="304" cy="167" r="17" fill="#fff"/>
+    </mask>
+  </defs>
+  <rect width="512" height="512" fill="#000" mask="url(#m)"/>
+</svg>
