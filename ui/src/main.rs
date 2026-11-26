@@ -37,6 +37,12 @@ fn home_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| die("HOME is not set")))
 }
 
+/// The LaunchAgent that `beckon-ui install` writes and `beckon-ui uninstall` removes (macOS).
+fn launch_agent() -> PathBuf {
+    // vetcode-ignore-next-line[mal-persistence] starting at login is what `beckon-ui install` is for; only that command writes it
+    home_dir().join(format!("Library/LaunchAgents/{UI_LABEL}.plist"))
+}
+
 fn beckon_home() -> PathBuf {
     std::env::var("BECKON_HOME").map(PathBuf::from).unwrap_or_else(|_| home_dir().join(".beckon"))
 }
@@ -469,7 +475,7 @@ fn install(listen: &str, token: &str) {
     let _ = fs::create_dir_all(&logs);
     let path_env = std::env::var("PATH").unwrap_or_default();
     if cfg!(target_os = "macos") {
-        let file = home_dir().join(format!("Library/LaunchAgents/{UI_LABEL}.plist"));
+        let file = launch_agent();
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -515,7 +521,7 @@ fn install(listen: &str, token: &str) {
 
 fn uninstall() {
     if cfg!(target_os = "macos") {
-        let file = home_dir().join(format!("Library/LaunchAgents/{UI_LABEL}.plist"));
+        let file = launch_agent();
         let _ = Command::new("launchctl").args(["bootout", &format!("gui/{}/{UI_LABEL}", sys::uid())]).output();
         let _ = fs::remove_file(file);
     } else {
