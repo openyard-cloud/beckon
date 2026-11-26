@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>beckon</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1d232a;--mute:#66707c;--line:#e3e6ea;--accent:#2f6fde;--ok:#1f9d55;--warn:#c98a04;--bad:#d64545;--bar:#2f6fde;--bar2:#9db8ec;--code:#f0f2f5;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111418;--card:#1a1f25;--ink:#e6e9ed;--mute:#98a2ae;--line:#2a3038;--accent:#6b9cf0;--ok:#3cc47c;--warn:#e0a826;--bad:#ef6b6b;--bar:#6b9cf0;--bar2:#34507f;--code:#14181d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#111418;--card:#1a1f25;--ink:#e6e9ed;--mute:#98a2ae;--line:#2a3038;--accent:#6b9cf0;--ok:#3cc47c;--warn:#e0a826;--bad:#ef6b6b;--bar:#6b9cf0;--bar2:#34507f;--code:#14181d;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:16px;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+header b{font-size:16px}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{border:0;background:none;color:var(--mute);padding:6px 10px;border-radius:6px;cursor:pointer;font:inherit}
+nav button.on{background:var(--code);color:var(--ink);font-weight:600}
+main{max-width:1100px;margin:0 auto;padding:16px}
+h2{font-size:15px;margin:24px 0 10px}
+h2:first-child{margin-top:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.k{color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.v{font-size:20px;font-weight:600;margin-top:4px;font-variant-numeric:tabular-nums}
+.s{color:var(--mute);font-size:12px;margin-top:4px;word-break:break-word}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle;background:var(--mute)}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;max-height:420px;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;margin:0}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--mute);font-weight:600}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.wrap{overflow-x:auto}
+button.b{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:6px 12px;border-radius:6px;cursor:pointer;font:inherit}
+button.b:hover{border-color:var(--accent)}
+button.p{background:var(--accent);border-color:var(--accent);color:#fff}
+button.d{color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+label{display:block;font-size:12px;color:var(--mute);margin:8px 0 2px}
+input,select,textarea{width:100%;font:13px ui-monospace,Menlo,monospace;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+textarea{min-height:64px;resize:vertical}
+input.err,textarea.err{border-color:var(--bad)}
+.row{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:0 12px}
+.full{grid-column:1/-1}
+.head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.head h3{margin:0;font-size:15px}
+.stack>*+*{margin-top:12px}
+[hidden]{display:none!important}
+.savebar{position:sticky;bottom:0;margin-top:16px;padding:10px 14px;background:var(--card);border:1px solid var(--accent);border-radius:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.errs{color:var(--bad);margin:6px 0 0;padding-left:18px}
+.bars{display:flex;align-items:flex-end;gap:3px;height:160px;padding:8px;background:var(--card);border:1px solid var(--line);border-radius:10px}
+.bars div{flex:1;min-width:3px;display:flex;flex-direction:column;justify-content:flex-end;height:100%}
+.bars i{display:block;background:var(--bar);border-radius:2px 2px 0 0}
+.bars i.r{background:var(--bar2);border-radius:0}
+.axis{display:flex;justify-content:space-between;color:var(--mute);font-size:11px;margin-top:4px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;background:var(--card);color:var(--mute);padding:5px 10px;cursor:pointer;font:inherit}
+.seg button.on{background:var(--accent);color:#fff}
+.muted{color:var(--mute)}
+#toast{position:fixed;right:16px;bottom:16px;max-width:360px;padding:10px 14px;border-radius:8px;background:var(--ink);color:var(--bg);opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+#toast.on{opacity:.95}
+.legend{display:flex;gap:14px;color:var(--mute);font-size:12px;margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+@media (max-width:600px){main{padding:12px 16px}.v{font-size:18px}}
+</style>
+</head>
+<body>
+<header><b>beckon</b><nav id="tabs"></nav></header>
+<main id="view"></main>
+<div id="toast"></div>
+<script>
+'use strict';
+// ---- access ----
+const m = location.hash.match(/t=([0-9a-f]+)/);
+if (m) { try { localStorage.setItem('beckonToken', m[1]); } catch {} history.replaceState(null, '', location.pathname); }
+let token = m ? m[1] : (() => { try { return localStorage.getItem('beckonToken') || ''; } catch { return ''; } })();
+
+async function api(path, body) {
+  const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + token, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const data = await r.json().catch(() => ({ error: 'bad response' }));
+  if (!r.ok) { const e = new Error(data.error || r.statusText); e.status = r.status; throw e; }
+  return data;
+}
+
+// ---- small helpers ----
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'class') el.className = v;
+    else if (k === 'style') el.style.cssText = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat(9)) if (c != null && c !== false) el.append(c instanceof Node ? c : String(c));
+  return el;
+}
+const num = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
+const mb = (kb) => (kb / 1024).toFixed(kb < 10240 ? 1 : 0) + ' MB';
+const dur = (s) => s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm' : s < 86400 ? Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm' : Math.floor(s / 86400) + 'd ' + Math.floor(s % 86400 / 3600) + 'h';
+const ago = (ms) => ms ? dur(Math.max(0, Math.round((Date.now() - ms) / 1000))) + ' ago' : '';
+const total = (t) => t[0] + t[1] + t[2] + t[3];
+let toastTimer;
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 3500); }
+const view = document.getElementById('view');
+function show(...els) { view.replaceChildren(...els); }
+function fail(e) {
+  if (e.status === 401) show(h('div', { class: 'card' }, h('b', {}, 'Not signed in. '), 'Open the link printed by ', h('code', {}, 'beckon-ui url'), ' on the beckon machine.'));
+  else toast(e.message);
+}
+
+// ---- tabs ----
+const TABS = { overview: 'Overview', projects: 'Projects', threads: 'Runs', usage: 'Usage', config: 'Config file' };
+let tab = (() => { try { return localStorage.getItem('beckonTab') || 'overview'; } catch { return 'overview'; } })();
+let timer = null, dirty = false;
+function nav() {
+  document.getElementById('tabs').replaceChildren(...Object.entries(TABS).map(([k, label]) => h('button', { class: k === tab ? 'on' : '', onclick: () => go(k) }, label)));
+}
+function go(k) {
+  if (dirty && !confirm('Discard unsaved changes?')) return;
+  dirty = false; tab = k; try { localStorage.setItem('beckonTab', k); } catch {}
+  clearInterval(timer); timer = null; nav();
+  ({ overview, projects, threads, usage, config })[k]().catch(fail);
+}
+addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
+
+// ---- overview ----
+const STATE = { connected: 'ok', applied: 'ok', reconnecting: 'warn', unknown: '', off: '', down: 'bad', rejected: 'bad' };
+function stat(label, value, sub, cls) {
+  return h('div', { class: 'card' }, h('div', { class: 'k' }, label), h('div', { class: 'v' }, cls != null ? h('span', { class: 'dot ' + cls }) : null, value), sub ? h('div', { class: 's' }, sub) : null);
+}
+async function overview() {
+  const draw = async () => {
+    const o = await api('/api/overview');
+    if (tab !== 'overview') return;
+    const d = o.daemon;
+    const since = (x) => x.at ? 'since ' + new Date(x.at).toLocaleString() : '';
+    const restart = h('button', { class: 'b', disabled: !d, onclick: async (e) => {
+      if (!confirm('Restart beckon? Running tasks finish first.')) return;
+      e.target.disabled = true;
+      try { await api('/api/restart', {}); toast('Restarting: beckon finishes running tasks first.'); } catch (err) { fail(err); }
+    } }, 'Restart');
+    const log = h('pre', {}, o.log || '(empty log)');
+    show(
+      h('div', { class: 'grid' },
+        h('div', { class: 'card' }, h('div', { class: 'head' }, h('div', { class: 'k' }, 'beckon'), restart),
+          h('div', { class: 'v' }, h('span', { class: 'dot ' + (d ? 'ok' : 'bad') }), d ? 'Running' : 'Stopped'),
+          h('div', { class: 's' }, d ? `pid ${d.pid} · up ${dur(d.secs)}` : 'Start it with: beckon service install')),
+        stat('Slack', o.slack.status, since(o.slack), STATE[o.slack.status] ?? ''),
+        stat('Secret relay', o.relay.status, since(o.relay), STATE[o.relay.status] ?? ''),
+        stat('Config', o.config.status, o.config.status === 'rejected' ? 'see the log below' : since(o.config), STATE[o.config.status] ?? ''),
+        stat('Memory', d ? mb(d.treeRssKb) : '–', d ? `daemon ${mb(d.rssKb)} · ${d.procs} processes with runs · this UI ${o.ui ? mb(o.ui.rssKb) : '?'}` : ''),
+        stat('CPU', d ? d.treeCpu.toFixed(1) + '%' : '–', d ? `daemon ${d.cpu.toFixed(1)}%` : ''),
+        stat('Setup', `${o.projects} project${o.projects === 1 ? '' : 's'}`, `${o.schedules} schedule(s) · ${o.watches} watch(es) · ${o.threads} threads`),
+      ),
+      h('h2', {}, `Running now (${o.runs.length})`),
+      o.runs.length ? h('div', { class: 'wrap' }, h('table', {}, h('tr', {}, h('th', {}, 'Project'), h('th', {}, 'Task'), h('th', { class: 'n' }, 'Time'), h('th', { class: 'n' }, 'Memory'), h('th', { class: 'n' }, 'CPU')),
+        o.runs.map((r) => h('tr', {}, h('td', {}, r.project), h('td', {}, r.title), h('td', { class: 'n' }, dur(r.secs)), h('td', { class: 'n' }, mb(r.rssKb)), h('td', { class: 'n' }, r.cpu.toFixed(1) + '%')))))
+        : h('div', { class: 'muted' }, 'Nothing is running.'),
+      h('h2', {}, 'Log'), log,
+    );
+    log.scrollTop = log.scrollHeight;
+  };
+  await draw();
+  timer = setInterval(() => { if (!document.hidden) draw().catch(fail); }, 5000);
+}
+
+// ---- projects, schedules, watches, settings (edits config.json) ----
+let cfg, version;
+const PERMS = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions', 'dontAsk'];
+function markDirty() { dirty = true; document.getElementById('savebar')?.removeAttribute('hidden'); }
+function field(obj, key, label, kind = 'text', opts = {}) {
+  const get = () => obj[key];
+  const set = (v) => { if (v === '' || v == null || (Array.isArray(v) && !v.length)) delete obj[key]; else obj[key] = v; markDirty(); };
+  let input;
+  if (kind === 'textarea') input = h('textarea', { rows: opts.rows || 3, oninput: (e) => set(e.target.value) }, get() ?? '');
+  else if (kind === 'select') input = h('select', { onchange: (e) => set(e.target.value) }, (opts.blank ? [''] : []).concat(opts.options).map((o) => h('option', { value: o, selected: (get() ?? opts.def) === o }, o || '(none)')));
+  else if (kind === 'number') input = h('input', { type: 'number', value: get() ?? '', placeholder: opts.placeholder, oninput: (e) => set(e.target.value === '' ? '' : Number(e.target.value)) });
+  else if (kind === 'list') input = h('input', { value: (get() || []).join(', '), placeholder: opts.placeholder, oninput: (e) => set(e.target.value.split(/[\s,]+/).filter(Boolean)) });
+  else if (kind === 'json') {
+    input = h('textarea', { rows: opts.rows || 4, oninput: (e) => {
+      const t = e.target.value.trim();
+      try { set(t ? JSON.parse(t) : ''); e.target.classList.remove('err'); e.target.dataset.bad = ''; } catch { e.target.classList.add('err'); e.target.dataset.bad = '1'; markDirty(); }
+    } }, get() == null ? '' : JSON.stringify(get(), null, 2));
+  } else input = h('input', { value: get() ?? '', placeholder: opts.placeholder, oninput: (e) => set(e.target.value) });
+  return h('div', { class: opts.full ? 'full' : '' }, h('label', {}, label), input);
+}
+function card(title, onDelete, ...body) {
+  return h('div', { class: 'card' }, h('div', { class: 'head' }, h('h3', {}, title), onDelete ? h('button', { class: 'b d', onclick: onDelete }, 'Remove') : null), h('div', { class: 'row' }, body));
+}
+async function loadConfig() { const c = await api('/api/config'); version = c.version; cfg = JSON.parse(c.text); return c; }
+async function save(text, errBox) {
+  if (view.querySelector('[data-bad="1"]')) { toast('Fix the fields marked red first.'); return false; }
+  try {
+    const r = await api('/api/config', { text, version });
+    if (!r.ok) { errBox.replaceChildren(h('b', {}, 'beckon would not accept this config:'), h('ul', { class: 'errs' }, r.errors.map((e) => h('li', {}, e)))); return false; }
+    version = r.version; dirty = false; errBox.replaceChildren(); toast('Saved. beckon applies it within a second.');
+    return true;
+  } catch (e) { if (e.status === 409) errBox.replaceChildren(h('b', { style: 'color:var(--bad)' }, e.message)); else fail(e); return false; }
+}
+async function projects() {
+  await loadConfig();
+  cfg.projects ??= {}; cfg.schedules ??= []; cfg.watches ??= [];
+  const names = () => Object.keys(cfg.projects);
+  const errBox = h('div');
+  const rerender = () => { draw(); markDirty(); };
+  const draw = () => {
+    const proj = names().map((n) => {
+      const p = cfg.projects[n];
+      return card(n + (cfg.defaultProject === n || (!cfg.defaultProject && names().length === 1) ? '  · default' : ''),
+        () => { if (confirm(`Remove project "${n}" from beckon? The repository is not touched.`)) { delete cfg.projects[n]; if (cfg.defaultProject === n) delete cfg.defaultProject; rerender(); } },
+        field(p, 'path', 'Folder (git repository)', 'text', { placeholder: '~/code/myapp' }),
+        field(p, 'channels', 'Channels', 'list', { placeholder: '#myapp, C0123ABC' }),
+        field(p, 'baseBranch', 'Base branch', 'text', { placeholder: 'remote default' }),
+        field(p, 'model', 'Model', 'text', { placeholder: 'Claude default' }),
+        field(p, 'permissionMode', 'Permission mode', 'select', { options: PERMS, def: 'acceptEdits' }),
+        field(p, 'setup', 'Setup command (new worktrees)', 'text', { placeholder: 'npm ci' }),
+        field(p, 'mcpConfig', 'Extra MCP config', 'text', { placeholder: '~/.beckon/mcp-screen.json' }),
+        field(p, 'instructions', 'Instructions for Claude', 'textarea', { full: true, rows: 4 }),
+        field(p, 'alwaysAsk', 'Always ask (JSON list of regexes or { tool, match, label })', 'json', { full: true }),
+      );
+    });
+    const newName = h('input', { placeholder: 'new project name' });
+    const sched = cfg.schedules.map((s, i) => card(s.name || `schedule ${i + 1}`, () => { cfg.schedules.splice(i, 1); rerender(); },
+      field(s, 'name', 'Name'), field(s, 'cron', 'Cron', 'text', { placeholder: '0 8 * * 1-5' }), field(s, 'timezone', 'Time zone', 'text', { placeholder: 'UTC' }),
+      field(s, 'project', 'Project', 'select', { options: names() }), field(s, 'channel', 'Channel or member ID'),
+      field(s, 'prompt', 'Prompt', 'textarea', { full: true, rows: 4 })));
+    const watches = cfg.watches.map((w, i) => card(w.name || w.channel || `watch ${i + 1}`, () => { cfg.watches.splice(i, 1); rerender(); },
+      field(w, 'name', 'Name'), field(w, 'channel', 'Channel', 'text', { placeholder: '#myapp-alerts' }),
+      field(w, 'project', 'Project', 'select', { options: names() }), field(w, 'match', 'Match (regex, case ignored)', 'text', { placeholder: ':red_circle:|ERROR' }),
+      field(w, 'from', 'Only from (bot names or IDs)', 'list', { placeholder: 'anyone' }), field(w, 'cooldownMinutes', 'Cooldown (minutes)', 'number', { placeholder: '60' }),
+      field(w, 'prompt', 'Prompt (empty: investigate only)', 'textarea', { full: true, rows: 3 })));
+    show(
+      h('h2', {}, 'Projects'),
+      h('div', { class: 'stack' }, proj,
+        h('div', { class: 'card' }, h('div', { class: 'head' }, newName, h('button', { class: 'b', onclick: () => {
+          const n = newName.value.trim();
+          if (!/^[a-z0-9][a-z0-9._-]*$/i.test(n)) return toast('Use letters, digits, dot, dash and underscore.');
+          if (names().some((x) => x.toLowerCase() === n.toLowerCase())) return toast('That name is taken.');
+          cfg.projects[n] = { path: '', channels: [] }; rerender();
+        } }, 'Add project')),
+          names().length > 1 ? h('div', {}, h('label', {}, 'Default project (for DMs)'), h('select', { onchange: (e) => { cfg.defaultProject = e.target.value; rerender(); } }, names().map((n) => h('option', { selected: cfg.defaultProject === n }, n)))) : null)),
+      h('h2', {}, 'Schedules'),
+      h('div', { class: 'stack' }, sched, h('button', { class: 'b', onclick: () => { cfg.schedules.push({ name: '', cron: '0 8 * * 1-5', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, project: names()[0], channel: '', prompt: '' }); rerender(); } }, 'Add schedule')),
+      h('h2', {}, 'Alert watches'),
+      h('div', { class: 'stack' }, watches, h('button', { class: 'b', onclick: () => { cfg.watches.push({ channel: '', project: names()[0], match: ':red_circle:' }); rerender(); } }, 'Add watch')),
+      h('h2', {}, 'Settings'),
+      card('Access and limits', null,
+        field(cfg, 'users', 'Slack members who may use beckon', 'list', { full: true }),
+        field(cfg, 'maxParallel', 'Runs at once', 'number', { placeholder: '3' }),
+        field(cfg, 'approvalTimeoutMinutes', 'Approval timeout (minutes)', 'number', { placeholder: '60' }),
+        field(cfg, 'keepDays', 'Keep idle worktrees (days)', 'number', { placeholder: '7' }),
+        field(cfg, 'shutdownGraceMinutes', 'Restart grace (minutes)', 'number', { placeholder: '30' }),
+        field(cfg, 'secretRelay', 'Secret relay (JSON)', 'json', { full: true, rows: 3 })),
+      h('div', { class: 'savebar', id: 'savebar', hidden: !dirty },
+        h('button', { class: 'b p', onclick: async () => { if (await save(JSON.stringify(cfg, null, 2), errBox)) { document.getElementById('savebar').hidden = true; } } }, 'Save'),
+        h('button', { class: 'b', onclick: () => { dirty = false; projects().catch(fail); } }, 'Discard'),
+        h('span', { class: 'muted' }, 'Unsaved changes'), errBox),
+    );
+  };
+  draw();
+}
+
+// ---- runs ----
+async function threads() {
+  const { threads: list } = await api('/api/threads');
+  const q = h('input', { placeholder: 'Filter by project or task', style: 'max-width:320px' });
+  const body = h('tbody');
+  const fill = () => {
+    const s = q.value.toLowerCase();
+    body.replaceChildren(...list.filter((t) => !s || `${t.project} ${t.title}`.toLowerCase().includes(s)).map((t) => h('tr', {},
+      h('td', { style: 'white-space:nowrap' }, h('span', { class: 'dot ' + (t.running ? 'ok' : ''), title: t.running ? 'running' : 'idle' }), t.project),
+      h('td', {}, t.title, t.allowAll ? h('span', { class: 'muted' }, ' · all allowed') : null, h('div', { class: 's' }, t.createdBy === 'schedule' ? 'schedule' : t.createdBy === 'watch' ? 'alert watch' : '', t.worktreeRemoved ? ' worktree removed' : '')),
+      h('td', { class: 'n' }, ago(t.lastActive)),
+      h('td', { class: 'n', title: `input ${t.tokens[0]} · output ${t.tokens[1]} · cache read ${t.tokens[2]} · cache write ${t.tokens[3]}` }, t.tokens[4] ? num(t.tokens[1]) : '–'),
+      h('td', { class: 'n' }, t.tokens[4] ? num(total(t.tokens)) : '–'),
+    )));
+  };
+  q.addEventListener('input', fill);
+  fill();
+  show(h('div', { class: 'head' }, h('h2', { style: 'margin:0' }, `Runs (${list.length})`), q), h('div', { class: 'wrap', style: 'margin-top:10px' },
+    h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Project'), h('th', {}, 'Task'), h('th', { class: 'n' }, 'Last active'), h('th', { class: 'n' }, 'Output'), h('th', { class: 'n' }, 'All tokens'))), body)));
+}
+
+// ---- usage ----
+let days = 14;
+async function usage() {
+  const u = await api('/api/usage?days=' + days);
+  const sum = u.days.reduce((a, d) => a.map((x, i) => x + d.tokens[i]), [0, 0, 0, 0, 0]);
+  const runs = u.days.reduce((a, d) => a + d.runs, 0);
+  const max = Math.max(1, ...u.days.map((d) => d.tokens[1]));
+  const seg = h('div', { class: 'seg' }, [7, 14, 30, 90].map((n) => h('button', { class: n === days ? 'on' : '', onclick: () => { days = n; usage().catch(fail); } }, n + 'd')));
+  const tbl = (head, rows) => h('div', { class: 'wrap' }, h('table', {}, h('tr', {}, head.map((x, i) => h('th', { class: i ? 'n' : '' }, x))), rows));
+  const tokRow = (name, t) => h('tr', {}, h('td', {}, name), h('td', { class: 'n' }, num(t[1])), h('td', { class: 'n' }, num(t[0] + t[3])), h('td', { class: 'n' }, num(t[2])), h('td', { class: 'n' }, num(t[4])));
+  const tokHead = ['', 'Output', 'Input + cache write', 'Cache read', 'Messages'];
+  show(
+    h('div', { class: 'head' }, h('h2', { style: 'margin:0' }, 'Usage of beckon runs'), seg),
+    h('div', { class: 'grid', style: 'margin-top:12px' },
+      stat('Runs started', String(runs), `last ${days} days`),
+      stat('Output tokens', num(sum[1]), 'what Claude wrote'),
+      stat('Input tokens', num(sum[0] + sum[3]), 'new input and cache writes'),
+      stat('Cache reads', num(sum[2]), 'context re-read from cache'),
+      stat('Messages', num(sum[4]), 'model responses')),
+    h('h2', {}, 'Output tokens per day'),
+    h('div', { class: 'bars' }, u.days.map((d) => h('div', { title: `${d.day}: ${num(d.tokens[1])} output, ${num(total(d.tokens))} total, ${d.runs} run(s)` }, h('i', { style: `height:${(d.tokens[1] / max) * 100}%` })))),
+    h('div', { class: 'axis' }, h('span', {}, u.days[0]?.day), h('span', {}, u.days.at(-1)?.day)),
+    h('h2', {}, 'By model'), u.models.length ? tbl(tokHead, u.models.map((x) => tokRow(x.model, x.tokens))) : h('div', { class: 'muted' }, 'No usage in this period.'),
+    h('h2', {}, 'By project'), u.projects.length ? tbl(tokHead, u.projects.map((x) => tokRow(x.project, x.tokens))) : null,
+    h('h2', {}, 'Largest runs'), u.top.length ? tbl(['Task', 'Output', 'Input + cache write', 'Cache read', 'Messages'], u.top.map((x) => tokRow(`${x.project}: ${x.title}`, x.tokens))) : null,
+    h('p', { class: 'muted' }, 'Counted from Claude Code\'s transcripts of beckon\'s runs. Your Claude plan\'s limits are on claude.ai, under Settings > Usage.'),
+  );
+}
+
+// ---- raw config ----
+async function config() {
+  const c = await loadConfig();
+  const ta = h('textarea', { style: 'min-height:60vh', spellcheck: 'false', oninput: () => { dirty = true; } }, c.text);
+  const errBox = h('div');
+  show(h('div', { class: 'head' }, h('h2', { style: 'margin:0' }, c.path), h('div', {},
+      h('button', { class: 'b', onclick: async () => {
+        try { const r = await api('/api/config/check', { text: ta.value }); errBox.replaceChildren(r.errors.length ? h('ul', { class: 'errs' }, r.errors.map((e) => h('li', {}, e))) : h('span', { style: 'color:var(--ok)' }, 'Looks good.')); } catch (e) { fail(e); }
+      } }, 'Check'), ' ',
+      h('button', { class: 'b p', onclick: () => save(ta.value, errBox) }, 'Save'))),
+    h('p', { class: 'muted' }, 'Saved only if beckon\'s own config check passes. beckon applies it without a restart.'),
+    errBox, ta);
+}
+
+nav();
+go(tab);
+</script>
+</body>
+</html>
