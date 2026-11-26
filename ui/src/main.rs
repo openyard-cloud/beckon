@@ -267,7 +267,7 @@ impl App {
                 // the claude process and everything it started (MCP servers, builds, browsers)
                 let sub = sys::tree(&all, p.pid);
                 runs.push(json!({
-                    "project": t["project"], "title": t["title"], "pid": p.pid,
+                    "project": t["project"], "agent": t["agent"], "title": t["title"], "pid": p.pid,
                     "rssKb": sub.iter().map(|x| x.rss_kb).sum::<u64>(),
                     "cpu": sub.iter().map(|x| x.cpu).sum::<f64>(),
                     "secs": sys::etime_secs(&p.etime),
@@ -411,7 +411,7 @@ impl App {
             let worktree = t["worktree"].as_str().unwrap_or("");
             let sums = if t["started"].as_bool() == Some(true) { self.usage.session(worktree, session).total() } else { [0; 5] };
             list.push(json!({
-                "key": key, "project": t["project"], "title": t["title"], "channel": t["channel"],
+                "key": key, "project": t["project"], "agent": t["agent"], "title": t["title"], "channel": t["channel"],
                 "createdAt": t["createdAt"], "lastActive": t["lastActive"], "createdBy": t["createdBy"],
                 "worktree": worktree, "worktreeRemoved": t["worktreeRemoved"].as_bool().unwrap_or(false),
                 "allowAll": t["allowAll"].as_bool().unwrap_or(false),

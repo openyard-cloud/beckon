@@ -43,3 +43,10 @@ test('reports a missing binary as an error instead of throwing', async () => {
   assert.equal(res.isError, true);
   assert.match(res.spawnError, /ENOENT/);
 });
+
+test('an agent run names the agent and loads each skills folder as a plugin', () => {
+  const args = claudeArgs({ sessionId: 's', agent: 'qa', pluginDirs: ['/w/.claude/roles/qa', '/x'] });
+  assert.equal(args[args.indexOf('--agent') + 1], 'qa');
+  assert.deepEqual(args.flatMap((a, i) => (a === '--plugin-dir' ? [args[i + 1]] : [])), ['/w/.claude/roles/qa', '/x']);
+  assert.ok(!claudeArgs({ sessionId: 's' }).includes('--agent'));
+});

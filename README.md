@@ -96,6 +96,38 @@ A thread keeps the project its first message picked. Replies in it go to the sam
 
 The simplest setup is one channel per project (`#myapp-agent`, `#website-agent`) and your busiest project as the default for DMs.
 
+### Agents: PM, dev, designer, QA
+
+A project can have several agents, each a role with its own instructions, tools and skills: for example `pm`, `dev`, `designer` and `qa`. Name one at the start of a message to give it the task:
+
+```
+@beckon pm: write the spec for club rankings by month
+@beckon qa: check the booking flow on the web app
+@beckon pickcourt: designer: the event card is hard to read
+```
+
+Without a name, the task goes to the agent of the channel (an agent's `channels`), else to the project's `defaultAgent`, else to plain Claude Code. In a thread, a reply that starts with an agent's name hands the thread to that agent from then on, in the same session and worktree. So one thread can go from `pm:` (the spec) to `dev:` (the code and the pull request) to `qa:` (checking it). The progress message and the answer show which agent is working.
+
+Each agent runs one of Claude Code's own agents (`claude --agent <name>`): a file in the repository's `.claude/agents/` (or in `~/.claude/agents/`) with the role's prompt, its tools and its model. Its `skills` are folders that hold `skills/<name>/SKILL.md`; beckon loads each one as a plugin for that agent's runs only (`--plugin-dir`), so a skill for QA is not in the PM's way. Keep both in the repository, so the team edits them in pull requests:
+
+```jsonc
+"projects": {
+  "myapp": {
+    "path": "~/code/myapp",
+    "channels": ["#myapp", "#myapp-design"],
+    "agents": {
+      "pm":       { "description": "specs, priorities, product numbers", "skills": ".claude/roles/pm" },
+      "dev":      { "agent": "senior-dev", "skills": ".claude/roles/dev" },  // agent: the file's name, if it differs
+      "designer": { "skills": ".claude/roles/designer", "channels": ["#myapp-design"] },
+      "qa":       { "skills": ".claude/roles/qa", "model": "sonnet" }
+    },
+    "defaultAgent": "dev"
+  }
+}
+```
+
+An agent can also set its own `model` and `permissionMode`. Schedules and watches take an `agent` too, like a morning report from `pm` or alert investigations by `dev`; without one, they use the project's `defaultAgent`. An agent file must list the `Skill` tool in its `tools` (or leave `tools` out) to use its skills.
+
 ### Managing projects from Slack
 
 Mention beckon with one of these, or send it in a DM. Only the members in `users` can use them. Each one edits `~/.beckon/config.json` and takes effect at once, without a restart.
@@ -306,6 +338,8 @@ Limits:
       "setup": "npm ci",                  // optional, runs once in each new worktree
       "instructions": "Open PRs as drafts.", // optional, added to Claude's system prompt
       "mcpConfig": "~/.beckon/mcp-screen.json", // optional, extra MCP servers for this project's runs
+      "agents": { "qa": { "skills": ".claude/roles/qa" } }, // optional, see "Agents"
+      "defaultAgent": "qa",              // optional
       "alwaysAsk": [
         "playwright test",                // a regex on Bash commands
         { "tool": "^(Edit|Write)$", "match": "migrations/", "label": "edit a migration" }
@@ -320,7 +354,8 @@ Limits:
       "timezone": "Asia/Ho_Chi_Minh",
       "project": "myapp",
       "channel": "#myapp",                // or your member ID for a DM
-      "prompt": "Summarize yesterday's merged PRs, failing CI runs and open incidents."
+      "prompt": "Summarize yesterday's merged PRs, failing CI runs and open incidents.",
+      "agent": "qa"                     // optional, one of the project's agents
     }
   ],
   "watches": [                            // see "Watching an alert channel"

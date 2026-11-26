@@ -336,7 +336,10 @@ impl Bar {
                 let title: String = r["title"].as_str().unwrap_or("").chars().take(48).collect();
                 out.push(format!(
                     "{} · {} · {} · {}",
-                    r["project"].as_str().unwrap_or(""),
+                    match r["agent"].as_str() {
+                        Some(a) => format!("{}/{a}", r["project"].as_str().unwrap_or("")),
+                        None => r["project"].as_str().unwrap_or("").to_string(),
+                    },
                     title,
                     dur(r["secs"].as_u64().unwrap_or(0)),
                     mb(r["rssKb"].as_u64().unwrap_or(0))

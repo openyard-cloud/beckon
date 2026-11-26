@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
+import { existsSync } from 'node:fs';
 import { Progress } from './progress.mjs';
 import { TabTracker } from './tabs.mjs';
 import { validateRequest as validateSecretRequest, NoPasskeyError } from './secrets.mjs';
@@ -225,6 +226,16 @@ export class Beckon {
         if (id) channelProjects.set(id, p.name);
       }
     }
+    // A channel can give new tasks to one of its project's agents.
+    const channelAgents = new Map();
+    for (const p of Object.values(this.config.projects)) {
+      for (const a of Object.values(p.agents ?? {})) {
+        for (const c of a.channels) {
+          const id = channelIds.get(c);
+          if (id) channelAgents.set(id, a.name);
+        }
+      }
+    }
     const watchChannels = new Map();
     for (const w of this.config.watches) {
       const id = channelIds.get(w.channel);
@@ -233,6 +244,7 @@ export class Beckon {
     // Swapped in at once, so a message arriving meanwhile never sees a half-built map.
     this.channelIds = channelIds;
     this.channelProjects = channelProjects;
+    this.channelAgents = channelAgents;
     this.watchChannels = watchChannels;
   }
 
@@ -304,8 +316,19 @@ export class Beckon {
       if (!this.config.projects[known.project]) {
         return this.post(ev.channel, ev.thread_ts, `The project \`${known.project}\` of this thread is no longer in beckon. Start a new message to work on another project.`);
       }
+      // "qa: check it" hands the thread to another agent of its project, from this turn on.
+      let rest = text;
+      const named = this.agentPrefix(known.project, text);
+      if (named) {
+        rest = named.rest;
+        if (known.agent !== named.agent) {
+          known.agent = named.agent;
+          this.state.save();
+        }
+        if (!rest) return this.post(ev.channel, ev.thread_ts, `This thread now goes to *${named.agent}*. Send the task.`);
+      }
       await this.react(ev.channel, ev.ts, 'eyes');
-      return this.enqueue(key, { text, user: ev.user, ts: ev.ts });
+      return this.enqueue(key, { text: rest, user: ev.user, ts: ev.ts });
     }
 
     const replyTs = ev.thread_ts ?? ev.ts;
@@ -330,13 +353,35 @@ export class Beckon {
       return;
     }
 
+    // The agent: named at the start ("qa: ..."), else the channel's agent, else the project's default.
+    const project = this.config.projects[projectName];
+    const named = this.agentPrefix(projectName, body);
+    let agent = null;
+    if (named) {
+      agent = named.agent;
+      body = named.rest;
+    } else {
+      const channelAgent = this.channelAgents?.get(ev.channel);
+      agent = channelAgent && project.agents?.[channelAgent] ? channelAgent : project.defaultAgent ?? null;
+    }
+    if (!body) return this.post(ev.channel, replyTs, `What should *${agent}* do? Send the task after the name, like \`${agent}: ...\`.`);
+
     let prompt = body;
     if (ev.thread_ts) {
       const context = await this.threadContext(ev.channel, ev.thread_ts, ev.ts);
       if (context) prompt = `${context}\n\n${body}`;
     }
     await this.react(ev.channel, ev.ts, 'eyes');
-    return this.startThread({ channel: ev.channel, threadTs: replyTs, project: projectName, text: prompt, title: body, user: ev.user, ts: ev.ts });
+    return this.startThread({ channel: ev.channel, threadTs: replyTs, project: projectName, agent, text: prompt, title: body, user: ev.user, ts: ev.ts });
+  }
+
+  // "qa: ..." at the start of a message, where qa is one of the project's agents (case ignored).
+  agentPrefix(projectName, text) {
+    const agents = this.config.projects[projectName]?.agents;
+    if (!agents || !Object.keys(agents).length) return null;
+    const m = text.match(PROJECT_PREFIX) ?? text.match(/^([a-z0-9][a-z0-9_-]*)\s*$/i);
+    const agent = m && findName(agents, m[1]);
+    return agent ? { agent, rest: text.slice(m[0].length).trim() } : null;
   }
 
   // A new top-level message in a watched channel that matches a watch starts an investigation
@@ -387,7 +432,7 @@ export class Beckon {
     this.state.watches[w.name] = { at: now, key: `${ev.channel}:${ev.ts}` };
     await this.react(ev.channel, ev.ts, 'eyes');
     this.log(`Watch "${w.name}": investigating an alert in ${ev.channel}`);
-    await this.startThread({ channel: ev.channel, threadTs: ev.ts, project: w.project, text: prompt, title: `${w.name}: ${oneLine(alert, 50)}`, user: 'watch', ts: ev.ts });
+    await this.startThread({ channel: ev.channel, threadTs: ev.ts, project: w.project, agent: w.agent ?? this.config.projects[w.project]?.defaultAgent ?? null, text: prompt, title: `${w.name}: ${oneLine(alert, 50)}`, user: 'watch', ts: ev.ts });
     return true;
   }
 
@@ -419,6 +464,7 @@ export class Beckon {
       '• Mention me with a task in a project\'s channel, or DM me (DMs go to the default project).',
       '• Start with `project:` to pick a project anywhere, like `hush: fix the build`. Case does not matter.',
       '• Each task gets its own thread and git worktree. Reply in the thread to continue; `stop` stops it.',
+      '• A project can have agents, like `pm`, `dev`, `designer` and `qa`, each with its own skills. Start with the agent\'s name to give it the task, like `qa: check the booking flow`. In a thread, `dev: fix it` hands the thread to another agent.',
       '• Risky actions (deploys, pushes to main, merges, migrations, releases) wait for an Allow button.',
       '',
       '*Commands* (mention me, or DM me)',
@@ -445,7 +491,8 @@ export class Beckon {
     return Object.values(this.config.projects).map((p) => {
       const channels = p.channels.map((c) => this.channelLabel(c)).join(', ') || 'no channel';
       const extra = [p.name === this.config.defaultProject ? 'default' : null, running.get(p.name) ? `${running.get(p.name)} running or queued` : null].filter(Boolean);
-      return `• *${p.name}*${extra.length ? ` (${extra.join(', ')})` : ''}: \`${p.path}\`, ${channels}`;
+      const agents = Object.values(p.agents ?? {}).map((a) => `\`${a.name}\`${a.name === p.defaultAgent ? ' (default)' : ''}${a.description ? `: ${a.description}` : ''}`);
+      return `• *${p.name}*${extra.length ? ` (${extra.join(', ')})` : ''}: \`${p.path}\`, ${channels}${agents.length ? `\n    agents: ${agents.join(' · ')}` : ''}`;
     });
   }
 
@@ -656,10 +703,11 @@ export class Beckon {
 
   // ---- threads and turns ----
 
-  startThread({ channel, threadTs, project, text, title, user, ts }) {
+  startThread({ channel, threadTs, project, agent = null, text, title, user, ts }) {
     const key = `${channel}:${threadTs}`;
     const t = {
       project,
+      agent,
       channel,
       threadTs,
       sessionId: randomUUID(),
@@ -719,6 +767,11 @@ export class Beckon {
       const run = `"${this.nodePath}" "${this.secretScript}"`;
       lines.push(`- Never type a password or one-time code yourself, and never ask for one in Slack. To fill one, first click the field so it has focus, then run: ${run} --label "Apple ID password" --kind password --app "Google Chrome" --domain apple.com (kind: password for a password field; otp for a one-time code or PIN, including one split into a box per digit, where you click the first box; text otherwise; --domain is the site, required for web pages). It waits while the person enters the value on their phone, then prints the result: filled, refused (with the reason, for example the focus moved), cancelled or expired. You never see the value. Keep that field focused and the page open until it is done.`);
       lines.push(`- When a command needs a secret value itself (an API key, a token, a service-account JSON key), never ask for it in Slack and never put it in a file you keep. Run: ${run} --label "Stripe secret key" --run 'gh secret set STRIPE_KEY' . The person enters it on their phone, and only that beckon-secret process can open it: the command gets it once on its input (or in one variable with --env NAME, or as a temporary file at $BECKON_SECRET_FILE with --file; use --kind multiline for JSON keys and other multi-line values), then it is wiped. You get the result and the command's output with the value masked. Pick a command that sends the value straight to where it belongs (gh secret set, wrangler secret put, an upload that takes --json_key "$BECKON_SECRET_FILE"); never one that prints, copies or saves it somewhere you can read later.`);
+    }
+    const agent = this.agentOf(t, project);
+    if (agent) {
+      const others = Object.keys(project.agents).filter((n) => n !== agent.name);
+      lines.push(`- In this thread you are the project's *${agent.name}* agent${agent.description ? ` (${agent.description})` : ''}. Stay in that role.${others.length ? ` The project's other agents are ${others.join(', ')}; the user hands the thread to one by starting a message with its name, like \`${others[0]}: ...\`. When work belongs to another role, finish your part and say which agent should take it next and what to send it.` : ''}`);
     }
     if (project.instructions) lines.push('', project.instructions);
     return lines.join('\n');
@@ -822,11 +875,22 @@ export class Beckon {
       hookScript: this.hookScript,
       timeoutSeconds: this.config.approvalTimeoutMinutes * 60 + 60,
     });
+    const agent = this.agentOf(t, project);
+    const pluginDirs = [];
+    for (const dir of agent?.skills ?? []) {
+      const full = isAbsolute(dir) ? dir : join(t.worktree, dir);
+      if (existsSync(full)) pluginDirs.push(full);
+      else if (!run.progress.tasks.some((x) => x.id === `skills:${dir}`)) {
+        run.progress.addTask(`skills:${dir}`, `Skills folder ${dir} of agent ${agent.name} is not in this worktree`, 'error');
+      }
+    }
     const args = claudeArgs({
       sessionId: t.sessionId,
       resume: t.started,
-      model: project.model,
-      permissionMode: project.permissionMode,
+      agent: agent?.agent,
+      pluginDirs,
+      model: agent?.model ?? project.model,
+      permissionMode: agent?.permissionMode ?? project.permissionMode,
       mcpConfig: project.mcpConfig,
       settings,
       appendPrompt: this.systemPrompt(t, project, user, ref),
@@ -854,8 +918,19 @@ export class Beckon {
     return res;
   }
 
+  // The thread's agent, while the project still has it.
+  agentOf(t, project) {
+    return (t.agent && project?.agents?.[t.agent]) || null;
+  }
+
+  agentBlock(key) {
+    const t = this.state.threads[key];
+    const agent = this.agentOf(t, this.config.projects[t?.project]);
+    return agent ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `*${agent.name}* agent` }] }] : [];
+  }
+
   progressBlocks(key, run) {
-    const blocks = [run.progress.planBlock(this.now(), run.status)];
+    const blocks = [...this.agentBlock(key), run.progress.planBlock(this.now(), run.status)];
     if (run.status === 'working' || run.status === 'waiting') {
       blocks.push({ type: 'actions', elements: [button('Stop', 'beckon_stop', key, 'danger')] });
     }
@@ -870,7 +945,7 @@ export class Beckon {
     const reply = (run.reply ?? '').trim();
     const pieces = reply ? chunkMarkdown(emphasizeSummary(reply)) : [];
     const summary = reply ? oneLine(firstLine(reply), 300) : run.progress.title(this.now(), run.status);
-    const blocks = [run.progress.planBlock(this.now(), run.status)];
+    const blocks = [...this.agentBlock(key), run.progress.planBlock(this.now(), run.status)];
     if (pieces.length) blocks.push({ type: 'markdown', text: pieces[0] });
     await this.post(t.channel, t.threadTs, summary, blocks);
     for (const piece of pieces.slice(1)) {
@@ -1155,7 +1230,7 @@ export class Beckon {
         continue;
       }
       const posted = await this.post(channel, null, `:alarm_clock: ${s.name}`);
-      await this.startThread({ channel: posted.channel ?? channel, threadTs: posted.ts, project: s.project, text: s.prompt, title: s.name, user: 'schedule' });
+      await this.startThread({ channel: posted.channel ?? channel, threadTs: posted.ts, project: s.project, agent: s.agent ?? this.config.projects[s.project]?.defaultAgent ?? null, text: s.prompt, title: s.name, user: 'schedule' });
     }
   }
 

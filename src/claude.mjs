@@ -15,13 +15,17 @@ export function hookSettings({ nodePath, hookScript, timeoutSeconds }) {
   };
 }
 
-export function claudeArgs({ sessionId, resume, model, permissionMode, settings, appendPrompt, name, mcpConfig }) {
+export function claudeArgs({ sessionId, resume, model, permissionMode, settings, appendPrompt, name, mcpConfig, agent, pluginDirs = [] }) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   if (resume) args.push('--resume', sessionId);
   else {
     args.push('--session-id', sessionId);
     if (name) args.push('--name', name);
   }
+  // A project agent: Claude Code runs the session as that agent (its prompt, tools and model),
+  // with the agent's own skills loaded as plugins for this run only.
+  if (agent) args.push('--agent', agent);
+  for (const dir of pluginDirs) args.push('--plugin-dir', dir);
   if (model) args.push('--model', model);
   if (permissionMode) args.push('--permission-mode', permissionMode);
   args.push('--disallowedTools', 'AskUserQuestion');
