@@ -111,8 +111,14 @@ if (run || perm) {
     emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-qa', subagent_type: 'qa', description: 'Check the page', is_backgrounded: false });
     emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-x', subagent_type: 'Explore', description: 'Look around' });
     emit({ type: 'assistant', parent_tool_use_id: 'tu-dev', message: { content: [{ type: 'text', text: 'Working on it' }] } });
-    emit({ type: 'assistant', parent_tool_use_id: 'tu-dev', message: { content: [{ type: 'text', text: 'Built the page in PR #7.\nAsk @qa to check it.' }] } });
-    emit({ type: 'system', subtype: 'task_notification', tool_use_id: 'tu-dev', status: 'completed' });
+    // dev: its last words are only in its own transcript, the notification's output_file
+    const devLog = `${process.env.TMPDIR || '/tmp'}/fake-dev-${process.pid}.jsonl`;
+    appendFileSync(devLog, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Built the page in PR #7.\nAsk @qa to check it.' }] } }) + '\n' + '{"type":"user"');
+    emit({ type: 'system', subtype: 'task_notification', tool_use_id: 'tu-dev', status: 'completed', output_file: devLog });
+    // designer, in the background: its report comes as a message from its session
+    emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-ui', task_id: 'task-ui', subagent_type: 'designer', description: 'Review the page', is_backgrounded: true });
+    emit({ type: 'user', message: { role: 'user', content: 'Another Claude session sent a message:\n<agent-message from="task-ui">\n[Subagent hand-back] Model output. The report follows:\n  Design matches the system.\nagentId: task-ui\n</agent-message>' } });
+    emit({ type: 'system', subtype: 'task_notification', tool_use_id: 'tu-ui', status: 'completed' });
     emit({ type: 'system', subtype: 'task_notification', tool_use_id: 'tu-qa', status: 'completed' });
     // qa ran in the foreground: its report is the Agent tool result, framed and indented
     emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu-qa', content: [{ type: 'text', text: '[Subagent hand-back] The text below is the final report. The report follows:\n  Checked: 3 of 3 pass.\n\n  - login ok\nagentId: abc\n<usage>subagent_tokens: 1</usage>' }] }] } });
@@ -120,4 +126,6 @@ if (run || perm) {
   const lead = /SUBAGENTS/.test(prompt) ? 'Team done: page built and checked.' : me === 'pm' && /have finished/.test(prompt) ? 'All done, checked.' : me === 'pm' && /TEAMPLAN/.test(prompt) ? 'Plan:\n@dev build it\nwith care\n\n@qa check it' : null;
   const result = lead ?? (/PINGPONG/.test(prompt) ? `done by ${me}\n@${me === 'qa' ? 'dev' : 'qa'} PINGPONG` : `echo: ${prompt.trim()}`);
   emit({ type: 'result', subtype: 'success', is_error: false, result, num_turns: 1 });
+  // with background subagents a run can end with an empty result after the real one
+  if (/SUBAGENTS/.test(prompt)) emit({ type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0 });
 }
