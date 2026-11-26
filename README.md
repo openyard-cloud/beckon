@@ -350,9 +350,18 @@ Changes to this file apply without a restart (see [Editing the config file](#edi
 - **Linux:** `beckon service install` writes a systemd user unit. Run `sudo loginctl enable-linger $USER` so it keeps running after you log out. On a server without a browser, run `claude setup-token` and put the token in `~/.beckon/env` as `CLAUDE_CODE_OAUTH_TOKEN`.
 - **Logs:** `~/.beckon/logs/beckon.log` on macOS, or `journalctl --user -u beckon -f` on Linux.
 
-## Web UI (optional)
+## Menu bar app and web UI (optional)
 
-`ui/` is a small Rust program that serves a page for managing beckon from a browser:
+`ui/` is a small Rust program for keeping an eye on beckon and managing it.
+
+On macOS it is a **menu bar app**. Its icon in the top bar shows how many runs are going (or `!` when beckon is stopped or Slack is down), and its menu shows:
+
+- whether beckon is running, and the Slack and secret relay connections;
+- what is running now, with how long and how much memory each run takes;
+- today's runs and tokens, and the memory and CPU of beckon and its runs;
+- **Open beckon…** (the full window), **Restart beckon**, and **Open the log**.
+
+The window has the full UI:
 
 - **Overview:** whether beckon is running, the Slack and secret relay connections, config status, memory and CPU of beckon and its runs, the log, and a Restart button.
 - **Projects:** edit projects, schedules, alert watches and settings.
@@ -360,17 +369,25 @@ Changes to this file apply without a restart (see [Editing the config file](#edi
 - **Usage:** tokens per day, per model and per project, and the largest runs.
 - **Config file:** the raw JSON.
 
-It is one binary of about 600 KB with no runtime. It uses about 1 MB of memory when idle and about 10 MB after reading 90 days of usage. It reads `~/.beckon` and Claude Code's transcripts. It writes only `config.json`, and only after beckon's own config check passes; beckon then applies the change without a restart. It works while beckon is stopped.
+It is one binary of about 1.2 MB with no runtime. The menu bar app uses about 14 MB of memory and no CPU between its refreshes every 5 seconds. The window is a WebKit view that exists only while it is open; closing it gives the memory back. The app reads `~/.beckon` and Claude Code's transcripts. It writes only `config.json`, and only after beckon's own config check passes; beckon then applies the change without a restart. It works while beckon is stopped.
 
 ```sh
 cd ui && cargo build --release          # needs Rust (brew install rust, or rustup)
-./target/release/beckon-ui              # http://127.0.0.1:7878, prints a link with the access token
-./target/release/beckon-ui install      # run it in the background at login
-./target/release/beckon-ui install --listen tailscale   # reachable from your other devices on Tailscale
+./target/release/beckon-ui install      # macOS: the menu bar app, started at login, and beckon in ~/Applications
+./target/release/beckon-ui uninstall    # stop starting it at login
+```
+
+**Quit the menu bar app** in its menu stops it until the next login; open beckon from Applications or Spotlight to start it again.
+
+Elsewhere, or to reach it from another device, the same binary serves the page in a browser:
+
+```sh
+./target/release/beckon-ui --listen 127.0.0.1:7878              # prints a link with the access token
+./target/release/beckon-ui install --listen tailscale   # at login, reachable from your devices on Tailscale
 ./target/release/beckon-ui url          # print the link again
 ```
 
-Every API call needs the token in `~/.beckon/ui-token`. The link carries it in the `#fragment`, the page keeps it in the browser, and it never appears in a URL sent to the server. The UI speaks plain HTTP, so listen on `127.0.0.1` or a private network such as Tailscale, never on a public address. Delete `ui-token` and restart the UI to sign every browser out.
+Every API call needs the token in `~/.beckon/ui-token`. The menu bar app serves its window on `127.0.0.1` with a port the system picks. The link carries the token in the `#fragment`, the page keeps it, and it never appears in a URL sent to the server. The page speaks plain HTTP, so listen on `127.0.0.1` or a private network such as Tailscale, never on a public address. Delete `ui-token` and restart the UI to sign every browser out.
 
 ## Security notes
 

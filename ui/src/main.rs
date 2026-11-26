@@ -1,8 +1,9 @@
-// beckon-ui: a small web UI for beckon, served by one binary with no runtime.
+// beckon-ui: a small UI for beckon, one binary with no runtime.
 //
-//   beckon-ui                         serve on 127.0.0.1:7878
-//   beckon-ui --listen tailscale      serve on this machine's Tailscale address
-//   beckon-ui install [--listen ...]  run it in the background at login (launchd / systemd)
+//   beckon-ui                         macOS: the menu bar app; elsewhere: serve on 127.0.0.1:7878
+//   beckon-ui --listen ADDR           serve the page on ADDR ("tailscale" for the Tailscale address)
+//   beckon-ui install [--listen ...]  start it at login (launchd / systemd); on macOS without
+//                                     --listen this is the menu bar app, also in ~/Applications
 //   beckon-ui uninstall | url
 //
 // It reads ~/.beckon (config, state, logs) and Claude Code's transcripts, and writes only
@@ -10,6 +11,8 @@
 // Every API call needs the token in ~/.beckon/ui-token; `url` prints a link that carries it.
 
 mod sys;
+#[cfg(target_os = "macos")]
+mod tray;
 mod usage;
 
 use std::collections::{BTreeMap, HashMap};
@@ -53,17 +56,17 @@ fn now_ms() -> u64 {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut listen = DEFAULT_LISTEN.to_string();
+    let mut listen: Option<String> = None;
     let mut cmd: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--listen" => {
                 i += 1;
-                listen = args.get(i).cloned().unwrap_or_else(|| die("--listen needs an address, like 127.0.0.1:7878 or tailscale"));
+                listen = Some(args.get(i).cloned().unwrap_or_else(|| die("--listen needs an address, like 127.0.0.1:7878 or tailscale")));
             }
             "-h" | "--help" | "help" => cmd = Some("help".into()),
-            c @ ("install" | "uninstall" | "url") if cmd.is_none() => cmd = Some(c.into()),
+            c @ ("install" | "uninstall" | "url" | "app") if cmd.is_none() => cmd = Some(c.into()),
             other => die(&format!("unknown argument \"{other}\"; see beckon-ui --help")),
         }
         i += 1;
@@ -71,24 +74,29 @@ fn main() {
     let home = beckon_home();
     match cmd.as_deref() {
         Some("help") => {
-            println!("beckon-ui [--listen ADDR]          serve the UI (default {DEFAULT_LISTEN})\nbeckon-ui install [--listen ADDR]  run it in the background at login\nbeckon-ui uninstall                stop running it at login\nbeckon-ui url [--listen ADDR]      print the link with the access token\n\nADDR is host:port, or \"tailscale\" / \"tailscale:PORT\" for this machine's Tailscale address.");
+            println!("beckon-ui                          macOS: the menu bar app; elsewhere: serve the page on {DEFAULT_LISTEN}\nbeckon-ui --listen ADDR             serve the page on ADDR\nbeckon-ui install [--listen ADDR]  start it at login (macOS without --listen: the menu bar app)\nbeckon-ui uninstall                stop starting it at login\nbeckon-ui url [--listen ADDR]      print the page's link with the access token\n\nADDR is host:port, or \"tailscale\" / \"tailscale:PORT\" for this machine's Tailscale address.");
             return;
         }
         Some("uninstall") => return uninstall(),
         _ => {}
     }
-    let listen = resolve_listen(&listen);
     let token = token(&home);
+    // The menu bar app is the default on macOS; asking for an address means serving the page.
+    let menu_bar = cfg!(target_os = "macos") && listen.is_none();
+    let listen = resolve_listen(listen.as_deref().unwrap_or(DEFAULT_LISTEN));
     match cmd.as_deref() {
-        Some("install") => return install(&listen, &token),
+        Some("install") => return install(if menu_bar { None } else { Some(&listen) }, &token),
         Some("url") => return println!("{}", link(&listen, &token)),
+        Some("app") if !cfg!(target_os = "macos") => die("the menu bar app is for macOS; use --listen to serve the page"),
         _ => {}
+    }
+    #[cfg(target_os = "macos")]
+    if menu_bar || cmd.as_deref() == Some("app") {
+        return tray::run(home, token);
     }
     let server = Server::http(&listen).unwrap_or_else(|e| die(&format!("cannot listen on {listen}: {e}")));
     eprintln!("beckon-ui: open {}", link(&listen, &token));
-    let claude_dir = std::env::var("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|_| home_dir().join(".claude"));
-    let offset = sys::utc_offset();
-    let mut app = App { home, token, offset, usage: usage::Cache::new(claude_dir, offset) };
+    let mut app = App::new(home, token);
     for req in server.incoming_requests() {
         app.handle(req);
     }
@@ -160,9 +168,17 @@ struct App {
     token: String,
     offset: i64,
     usage: usage::Cache,
+    /// POST /api/show: the menu bar app opens its window (a second start asks the first this way).
+    on_show: Option<Box<dyn Fn() + Send>>,
 }
 
 impl App {
+    fn new(home: PathBuf, token: String) -> Self {
+        let claude_dir = std::env::var("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|_| home_dir().join(".claude"));
+        let offset = sys::utc_offset();
+        App { home, token, offset, usage: usage::Cache::new(claude_dir, offset), on_show: None }
+    }
+
     fn handle(&mut self, mut req: Request) {
         let url = req.url().to_string();
         let (path, query) = url.split_once('?').unwrap_or((&url, ""));
@@ -197,6 +213,13 @@ impl App {
                     (Method::Get, "/api/threads") => Ok(self.threads()),
                     (Method::Get, "/api/usage") => Ok(self.usage(query)),
                     (Method::Post, "/api/restart") => self.restart(),
+                    (Method::Post, "/api/show") => match &self.on_show {
+                        Some(show) => {
+                            show();
+                            Ok(json!({ "ok": true }))
+                        }
+                        None => Err(bad(404, "this beckon-ui has no window")),
+                    },
                     _ => Err(bad(404, "not found")),
                 }
             }
@@ -468,7 +491,8 @@ fn xml(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-fn install(listen: &str, token: &str) {
+/// Start beckon-ui at login. `listen` None: the menu bar app (macOS); Some: serve the page there.
+fn install(listen: Option<&str>, token: &str) {
     let exe = std::env::current_exe().unwrap_or_else(|e| die(&e.to_string()));
     let exe = exe.display().to_string();
     let logs = beckon_home().join("logs");
@@ -476,24 +500,28 @@ fn install(listen: &str, token: &str) {
     let path_env = std::env::var("PATH").unwrap_or_default();
     if cfg!(target_os = "macos") {
         let file = launch_agent();
+        // The menu bar app is not restarted after Quit (a clean exit), only after a crash.
+        let (args, keep_alive, kind) = match listen {
+            None => (vec![exe.clone(), "app".to_string()], "<dict><key>SuccessfulExit</key><false/></dict>", "Interactive"),
+            Some(l) => (vec![exe.clone(), "--listen".to_string(), l.to_string()], "<true/>", "Background"),
+        };
+        let args: String = args.iter().map(|a| format!("<string>{}</string>", xml(a))).collect();
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key><string>{UI_LABEL}</string>
-  <key>ProgramArguments</key><array><string>{}</string><string>--listen</string><string>{}</string></array>
+  <key>ProgramArguments</key><array>{args}</array>
   <key>EnvironmentVariables</key><dict><key>PATH</key><string>{}</string></dict>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <key>KeepAlive</key>{keep_alive}
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>ProcessType</key><string>Background</string>
+  <key>ProcessType</key><string>{kind}</string>
   <key>StandardErrorPath</key><string>{}</string>
 </dict>
 </plist>
 "#,
-            xml(&exe),
-            xml(listen),
             xml(&path_env),
             xml(&logs.join("ui.log").display().to_string())
         );
@@ -505,7 +533,11 @@ fn install(listen: &str, token: &str) {
         if !ok {
             die("launchctl bootstrap failed");
         }
+        if listen.is_none() {
+            app_bundle(&exe);
+        }
     } else {
+        let listen = listen.unwrap_or(DEFAULT_LISTEN);
         let file = home_dir().join(".config/systemd/user/beckon-ui.service");
         let unit = format!(
             "[Unit]\nDescription=beckon UI\nAfter=network-online.target\n\n[Service]\nExecStart=\"{exe}\" --listen {listen}\nEnvironment=PATH={path_env}\nRestart=always\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n"
@@ -516,7 +548,42 @@ fn install(listen: &str, token: &str) {
             let _ = Command::new("systemctl").args(a).status();
         }
     }
-    println!("beckon-ui runs in the background at login.\nOpen: {}", link(listen, token));
+    match (listen, cfg!(target_os = "macos")) {
+        (None, true) => println!("beckon is in the menu bar and starts at login. To open its window, use the menu, or open beckon from Applications or Spotlight."),
+        (l, _) => println!("beckon-ui runs in the background at login.\nOpen: {}", link(l.unwrap_or(DEFAULT_LISTEN), token)),
+    }
+}
+
+/// ~/Applications/beckon.app, so Spotlight and Launchpad find it. It starts the menu bar app, or,
+/// when that is already running, opens its window.
+fn app_bundle(exe: &str) {
+    let app = home_dir().join("Applications/beckon.app/Contents");
+    let _ = fs::create_dir_all(app.join("MacOS"));
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>beckon</string>
+  <key>CFBundleDisplayName</key><string>beckon</string>
+  <key>CFBundleIdentifier</key><string>{UI_LABEL}</string>
+  <key>CFBundleExecutable</key><string>beckon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>{}</string>
+  <key>LSUIElement</key><true/>
+</dict>
+</plist>
+"#,
+        env!("CARGO_PKG_VERSION")
+    );
+    let script = format!("#!/bin/sh\nexec '{}' app\n", exe.replace('\'', r"'\''"));
+    let run = app.join("MacOS/beckon");
+    let ok = fs::write(app.join("Info.plist"), plist).is_ok()
+        && fs::write(&run, script).is_ok()
+        && fs::set_permissions(&run, fs::Permissions::from_mode(0o755)).is_ok();
+    if !ok {
+        eprintln!("beckon-ui: could not write {}", app.display());
+    }
 }
 
 fn uninstall() {
@@ -524,9 +591,10 @@ fn uninstall() {
         let file = launch_agent();
         let _ = Command::new("launchctl").args(["bootout", &format!("gui/{}/{UI_LABEL}", sys::uid())]).output();
         let _ = fs::remove_file(file);
+        let _ = fs::remove_dir_all(home_dir().join("Applications/beckon.app"));
     } else {
         let _ = Command::new("systemctl").args(["--user", "disable", "--now", "beckon-ui.service"]).status();
         let _ = fs::remove_file(home_dir().join(".config/systemd/user/beckon-ui.service"));
     }
-    println!("beckon-ui no longer runs at login.");
+    println!("beckon-ui no longer starts at login.");
 }
