@@ -210,7 +210,7 @@ export function validateConfig(raw) {
     approvalTimeoutMinutes: num('approvalTimeoutMinutes', 60, 1, 1440),
     maxParallel: num('maxParallel', 3, 1, 20),
     // Agents handing a thread to each other: at most this many in a row without a person's message.
-    maxHandoffs: num('maxHandoffs', 3, 0, 10),
+    maxHandoffs: num('maxHandoffs', 3, 0, 30),
     keepDays: num('keepDays', 7, 1, 365),
     shutdownGraceMinutes: num('shutdownGraceMinutes', 30, 0, 240),
     claudePath: typeof raw.claudePath === 'string' ? expandHome(raw.claudePath) : 'claude',
