@@ -111,7 +111,9 @@ export function runClaude({ bin = 'claude', args, cwd, env, prompt, onEvent = ()
         sessionId = event.session_id ?? sessionId;
         apiKeySource = event.apiKeySource ?? null;
       }
-      if (event.type === 'result') result = event;
+      // With subagents in the background a run ends with several results, the last ones often
+      // empty: keep the last one that says something.
+      if (event.type === 'result' && (event.result || !result?.result)) result = event;
       try {
         onEvent(event);
       } catch {

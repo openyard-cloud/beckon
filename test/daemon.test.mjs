@@ -846,7 +846,7 @@ test('the lead runs its team as subagents: each member posts under its own app, 
         proj: {
           path: '/tmp',
           channels: ['#proj'],
-          agents: { pm: { slackApp: 'main', skills: skills.pm }, dev: { agent: 'senior-dev', slackApp: 'BE', skills: skills.dev }, qa: { slackApp: 'QA', skills: [skills.qa, skills.pm] } },
+          agents: { pm: { slackApp: 'main', skills: skills.pm }, dev: { agent: 'senior-dev', slackApp: 'BE', skills: skills.dev }, qa: { slackApp: 'QA', skills: [skills.qa, skills.pm] }, designer: {} },
           defaultAgent: 'pm',
           lead: 'pm',
         },
@@ -861,6 +861,8 @@ test('the lead runs its team as subagents: each member posts under its own app, 
 
     await beckon.handleEvent(mention('SUBAGENTS ship the booking page'));
     await done();
+    // members are announced after a short pause (to group the ones started together), then report
+    await waitFor(() => beSlack.find('chat.update').length && qaSlack.find('chat.update').length && slack.find('chat.update').some((c) => /Design matches/.test(JSON.stringify(c.body.blocks))), { timeout: 8000 });
     assert.equal(claudeRuns().length, 1, 'one session: the team ran inside it');
     const run = claudeRuns()[0];
     const prompt = run.argv[run.argv.indexOf('--append-system-prompt') + 1];
@@ -881,8 +883,13 @@ test('the lead runs its team as subagents: each member posts under its own app, 
     assert.ok(/login ok/.test(JSON.stringify(qaDone.blocks)) && !/agentId|usage|hand-back/.test(JSON.stringify(qaDone.blocks)), 'only the report, without the frame');
     assert.ok(!slack.posts().some((p) => /Look around/.test(p.text)), 'a subagent that is not a project agent gets no message');
 
-    const plan = slack.posts().filter((p) => /Plan: dev builds and qa checks together/.test(p.text));
-    assert.equal(plan.length, 1, 'the lead\'s plan is posted once, under its own name, before the team starts');
+    const plan = slack.posts().filter((p) => /Plan: dev builds and qa checks together/.test(JSON.stringify(p.blocks)));
+    assert.equal(plan.length, 1, 'one plan message for the members started together');
+    assert.match(JSON.stringify(plan[0].blocks), /<@UBE>: Build the page/);
+    assert.match(JSON.stringify(plan[0].blocks), /3 working at the same time/);
+    const uiWorking = slack.posts().findIndex((p) => p.text === 'Review the page…');
+    assert.ok(uiWorking > slack.posts().indexOf(plan[0]), 'members are announced after the plan');
+    assert.ok(slack.find('chat.update').some((c) => /Design matches the system/.test(JSON.stringify(c.body.blocks))), 'a background member\'s report from its agent-message');
     assert.match(prompt, /First decide who the work really needs/);
     const report = slack.posts().find((p) => /Team done/.test(p.text));
     assert.match(report.text, /^<@U1> Team done/, 'the lead\'s report mentions the person who asked');

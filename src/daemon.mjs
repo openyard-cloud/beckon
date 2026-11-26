@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { join, isAbsolute } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { Progress } from './progress.mjs';
 import { TabTracker } from './tabs.mjs';
 import { validateRequest as validateSecretRequest, NoPasskeyError } from './secrets.mjs';
@@ -55,6 +55,25 @@ export function agentReport(text) {
     else out.push(line);
   }
   return out.join('\n').trim() || null;
+}
+
+// The last thing a subagent said, from its own transcript (the output_file of its notification).
+export function lastAssistantText(file) {
+  let lines;
+  try {
+    lines = readFileSync(file, 'utf8').trim().split('\n');
+  } catch {
+    return null;
+  }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const e = JSON.parse(lines[i]);
+      if (e.type !== 'assistant') continue;
+      const text = (e.message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
+      if (text) return text;
+    } catch { /* a partly written line */ }
+  }
+  return null;
 }
 
 // Bold the opening summary sentence so it reads as the headline of the answer.
@@ -1065,28 +1084,35 @@ export class Beckon {
 
   // A project agent started as a subagent in this run (the lead giving it a task) gets a message
   // of its own in the thread, under its own name: "working on ..." while it runs, then its report.
+  // Members started together are announced first, in one message from the lead.
   async trackSubagent(key, run, project, e) {
     const t = this.state.threads[key];
     run.subs ??= new Map();
-    // The lead's own words before it starts the team: its plan, posted once.
+    // The lead's own words before it starts members: shown with the plan.
     if (e.type === 'assistant' && !e.parent_tool_use_id) {
       const text = (e.message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
-      if (text && !run.planPosted) run.leadText = text;
+      if (text) run.leadText = text;
+      return;
     }
     if (e.type === 'system' && e.subtype === 'task_started' && e.subagent_type && e.tool_use_id) {
       const agent = Object.values(project?.agents ?? {}).find((a) => a.agent === e.subagent_type || a.name === e.subagent_type);
       if (!agent) return;
-      if (!run.planPosted && run.leadText && project?.lead) {
-        run.planPosted = true;
-        const lead = project.agents[project.lead];
-        const plan = this.linkAgents(run.leadText, project);
-        run.planPost = this.post(t.channel, t.threadTs, oneLine(plan, 300), [{ type: 'context', elements: [{ type: 'mrkdwn', text: ':clipboard: Plan' }] }, { type: 'markdown', text: chunkMarkdown(plan)[0] }], lead).catch(() => null);
-      }
-      const sub = { agent, description: e.description || e.subagent_type, text: '', background: e.is_backgrounded !== false };
+      const sub = { agent, description: e.description || e.subagent_type, taskId: e.task_id ?? null, text: '' };
       run.subs.set(e.tool_use_id, sub);
-      const label = `:hourglass_flowing_sand: ${sub.description}`;
-      // after the plan, so the thread reads in order
-      sub.posted = Promise.resolve(run.planPost).then(() => this.post(t.channel, t.threadTs, `${sub.description}…`, [{ type: 'context', elements: [{ type: 'mrkdwn', text: label }] }], agent)).catch(() => null);
+      // Members started within a moment of each other run together: one plan message for them.
+      if (!run.batch) {
+        const batch = { subs: [], first: !run.planned };
+        run.planned = true;
+        batch.ready = new Promise((resolve) => setTimeout(() => {
+          if (run.batch === batch) run.batch = null;
+          this.postPlan(t, project, batch, run.leadText).catch(() => {}).finally(resolve);
+          run.leadText = '';
+        }, 1500));
+        run.batch = batch;
+      }
+      run.batch.subs.push(sub);
+      const ready = run.batch.ready;
+      sub.posted = ready.then(() => this.post(t.channel, t.threadTs, `${sub.description}…`, [{ type: 'context', elements: [{ type: 'mrkdwn', text: `:hourglass_flowing_sand: ${sub.description}` }] }], agent)).catch(() => null);
       return;
     }
     if (e.type === 'assistant' && e.parent_tool_use_id && run.subs.has(e.parent_tool_use_id)) {
@@ -1094,15 +1120,23 @@ export class Beckon {
       if (text) run.subs.get(e.parent_tool_use_id).text = text;
       return;
     }
-    // A subagent in the foreground hands its report back as the Agent tool's result, which comes
-    // just after its notification; one in the background speaks in messages before it.
+    // Reports handed back to the lead: as the Agent tool's result (a member in the foreground), or
+    // as a message from the member's session (<agent-message from="task id">, in the background).
     if (e.type === 'user') {
-      for (const c of e.message?.content ?? []) {
-        if (c.type !== 'tool_result' || !run.subs.has(c.tool_use_id)) continue;
-        const raw = Array.isArray(c.content) ? c.content.map((x) => x.text ?? '').join('\n') : c.content;
-        const report = agentReport(raw);
+      const content = typeof e.message?.content === 'string' ? [{ type: 'text', text: e.message.content }] : e.message?.content ?? [];
+      for (const c of content) {
+        let sub = null;
+        let raw = '';
+        if (c.type === 'tool_result' && run.subs.has(c.tool_use_id)) {
+          sub = run.subs.get(c.tool_use_id);
+          raw = Array.isArray(c.content) ? c.content.map((x) => x.text ?? '').join('\n') : c.content;
+        } else if (c.type === 'text') {
+          const m = String(c.text).match(/<agent-message from="([^"]+)">/);
+          sub = m ? [...run.subs.values()].find((s) => s.taskId === m[1]) : null;
+          raw = String(c.text).replace(/<\/agent-message>[\s\S]*$/, '');
+        }
+        const report = sub && agentReport(raw);
         if (!report) continue;
-        const sub = run.subs.get(c.tool_use_id);
         sub.text = report;
         sub.final = true;
         if (sub.status) await this.subagentDone(t, project, sub);
@@ -1112,11 +1146,24 @@ export class Beckon {
     if (e.type === 'system' && e.subtype === 'task_notification' && run.subs.has(e.tool_use_id)) {
       const sub = run.subs.get(e.tool_use_id);
       sub.status = e.status;
-      if (sub.final || (sub.background && sub.text)) return this.subagentDone(t, project, sub);
-      // wait a little for the report, then post what there is
+      // The member's own transcript has its last words, whatever way they come back.
+      if (!sub.final && e.output_file) {
+        const last = lastAssistantText(e.output_file);
+        if (last) { sub.text = last; sub.final = true; }
+      }
+      if (sub.final) return this.subagentDone(t, project, sub);
       const timer = setTimeout(() => this.subagentDone(t, project, sub).catch(() => {}), 10_000);
       timer.unref?.();
     }
+  }
+
+  async postPlan(t, project, batch, leadText) {
+    const lead = project?.lead ? project.agents[project.lead] : null;
+    const who = batch.subs.map((s) => `• @${s.agent.name}: ${s.description}`).join('\n');
+    const how = batch.subs.length > 1 ? `_${batch.subs.length} working at the same time._` : '';
+    const text = this.linkAgents([leadText, who, how].filter(Boolean).join('\n\n'), project);
+    const label = batch.first ? ':clipboard: Plan' : ':arrow_right: Next';
+    await this.post(t.channel, t.threadTs, oneLine(text, 300), [{ type: 'context', elements: [{ type: 'mrkdwn', text: label }] }, { type: 'markdown', text: chunkMarkdown(text)[0] }], lead);
   }
 
   async subagentDone(t, project, sub) {
