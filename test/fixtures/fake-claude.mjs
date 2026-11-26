@@ -106,6 +106,7 @@ if (run || perm) {
   const me = opt('--agent');
   if (/SUBAGENTS/.test(prompt)) {
     // the lead starts two project agents as subagents, which run in the background and report
+    emit({ type: 'assistant', message: { content: [{ type: 'text', text: 'Plan: dev builds and qa checks together, they touch different files.' }] } });
     emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-dev', subagent_type: 'senior-dev', description: 'Build the page' });
     emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-qa', subagent_type: 'qa', description: 'Check the page', is_backgrounded: false });
     emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-x', subagent_type: 'Explore', description: 'Look around' });

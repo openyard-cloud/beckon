@@ -876,7 +876,7 @@ export class Beckon {
       if (project.lead && others.length) {
         if (agent.name === project.lead) {
           const team = others.map((n) => `${n} (subagent_type "${project.agents[n].agent}"${project.agents[n].description ? `: ${project.agents[n].description}` : ''})`).join(', ');
-          lines.push(`- You lead this project's team: ${team}. A person gives you the work; you plan it and get it done through the team, without asking the person to pass anything on. Give each task to a member with the Agent tool and its subagent_type, with everything it needs in the prompt: the request, the spec or files, what to do and what to report (and that risky actions wait for the person's Allow button in Slack, which is normal). Start tasks that do not depend on each other in the same message, so they run at the same time; they share this worktree, so never run two at once that edit the same files, and start a task that needs another's result (testing after the code) once that result is in. Each member's report is posted to the Slack thread under its own name. Check the reports, give out what comes next (the fixes for what testing found, then testing again), and when the work is done and checked, write the final report for the person. Do your own part (understanding the request, specs, decisions, numbers) yourself, and leave code, design and testing to the team. Ask the person only for decisions that are really theirs: then end the turn with the question.`);
+          lines.push(`- You lead this project's team: ${team}. A person gives you the work; you plan it and get it done through the team, without asking the person to pass anything on. First decide who the work really needs: only the members whose role it calls for (often one or two; a question you can answer yourself needs nobody), never everyone by default. Then decide what runs at the same time: tasks that do not depend on each other and do not edit the same files run together; the rest in order. Before you start anyone, write that plan in one or two lines (who, together or in order, and why); it is posted to the thread. Give each task to a member with the Agent tool and its subagent_type, with everything it needs in the prompt: the request, the spec or files, what to do and what to report (and that risky actions wait for the person's Allow button in Slack, which is normal). Start tasks that do not depend on each other in the same message, so they run at the same time; they share this worktree, so never run two at once that edit the same files, and start a task that needs another's result (testing after the code) once that result is in. Each member's report is posted to the Slack thread under its own name. Check the reports, give out what comes next (the fixes for what testing found, then testing again), and when the work is done and checked, write the final report for the person, with a line on who worked on it. Do your own part (understanding the request, specs, decisions, numbers) yourself, and leave code, design and testing to the team. Ask the person only for decisions that are really theirs: then end the turn with the question.`);
         } else if (String(user).startsWith('agent:')) {
           lines.push(`- You are on a team led by @${project.lead}, which gave you this task (above). Do it fully, then report what you did, what you found and what is left. Do not tag other agents: @${project.lead} reads your report and decides what comes next. If something needs a decision only a person can make, say so in your report.`);
         } else {
@@ -1068,13 +1068,25 @@ export class Beckon {
   async trackSubagent(key, run, project, e) {
     const t = this.state.threads[key];
     run.subs ??= new Map();
+    // The lead's own words before it starts the team: its plan, posted once.
+    if (e.type === 'assistant' && !e.parent_tool_use_id) {
+      const text = (e.message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
+      if (text && !run.planPosted) run.leadText = text;
+    }
     if (e.type === 'system' && e.subtype === 'task_started' && e.subagent_type && e.tool_use_id) {
       const agent = Object.values(project?.agents ?? {}).find((a) => a.agent === e.subagent_type || a.name === e.subagent_type);
       if (!agent) return;
+      if (!run.planPosted && run.leadText && project?.lead) {
+        run.planPosted = true;
+        const lead = project.agents[project.lead];
+        const plan = this.linkAgents(run.leadText, project);
+        run.planPost = this.post(t.channel, t.threadTs, oneLine(plan, 300), [{ type: 'context', elements: [{ type: 'mrkdwn', text: ':clipboard: Plan' }] }, { type: 'markdown', text: chunkMarkdown(plan)[0] }], lead).catch(() => null);
+      }
       const sub = { agent, description: e.description || e.subagent_type, text: '', background: e.is_backgrounded !== false };
       run.subs.set(e.tool_use_id, sub);
       const label = `:hourglass_flowing_sand: ${sub.description}`;
-      sub.posted = this.post(t.channel, t.threadTs, `${sub.description}…`, [{ type: 'context', elements: [{ type: 'mrkdwn', text: label }] }], agent).catch(() => null);
+      // after the plan, so the thread reads in order
+      sub.posted = Promise.resolve(run.planPost).then(() => this.post(t.channel, t.threadTs, `${sub.description}…`, [{ type: 'context', elements: [{ type: 'mrkdwn', text: label }] }], agent)).catch(() => null);
       return;
     }
     if (e.type === 'assistant' && e.parent_tool_use_id && run.subs.has(e.parent_tool_use_id)) {

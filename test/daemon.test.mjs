@@ -881,6 +881,9 @@ test('the lead runs its team as subagents: each member posts under its own app, 
     assert.ok(/login ok/.test(JSON.stringify(qaDone.blocks)) && !/agentId|usage|hand-back/.test(JSON.stringify(qaDone.blocks)), 'only the report, without the frame');
     assert.ok(!slack.posts().some((p) => /Look around/.test(p.text)), 'a subagent that is not a project agent gets no message');
 
+    const plan = slack.posts().filter((p) => /Plan: dev builds and qa checks together/.test(p.text));
+    assert.equal(plan.length, 1, 'the lead\'s plan is posted once, under its own name, before the team starts');
+    assert.match(prompt, /First decide who the work really needs/);
     const report = slack.posts().find((p) => /Team done/.test(p.text));
     assert.match(report.text, /^<@U1> Team done/, 'the lead\'s report mentions the person who asked');
   } finally {
