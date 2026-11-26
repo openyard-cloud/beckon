@@ -369,11 +369,11 @@ The window has the full UI:
 - **Usage:** tokens per day, per model and per project, and the largest runs.
 - **Config file:** the raw JSON.
 
-It is one binary of about 1.2 MB with no runtime. The menu bar app uses about 14 MB of memory and no CPU between its refreshes every 5 seconds. The window is a WebKit view that exists only while it is open; closing it gives the memory back. The app reads `~/.beckon` and Claude Code's transcripts. It writes only `config.json`, and only after beckon's own config check passes; beckon then applies the change without a restart. It works while beckon is stopped.
+It is one binary of about 1.2 MB with no runtime. The menu bar app uses about 15 MB of memory and about 0.1% of one CPU core: a refresh every 15 seconds costs about 12 ms. The window is a WebKit view that exists only while it is open; closing it gives the memory back. The app reads `~/.beckon` and Claude Code's transcripts. It writes only `config.json`, and only after beckon's own config check passes; beckon then applies the change without a restart. It works while beckon is stopped.
 
 ```sh
 cd ui && cargo build --release          # needs Rust (brew install rust, or rustup)
-./target/release/beckon-ui install      # macOS: the menu bar app, started at login, and beckon in ~/Applications
+./target/release/beckon-ui install      # macOS: beckon.app in ~/Applications, in the menu bar from login; run again after a rebuild
 ./target/release/beckon-ui uninstall    # stop starting it at login
 ```
 

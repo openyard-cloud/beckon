@@ -503,11 +503,15 @@ fn install(listen: Option<&str>, token: &str) {
     let logs = beckon_home().join("logs");
     let _ = fs::create_dir_all(&logs);
     let path_env = std::env::var("PATH").unwrap_or_default();
+    // The repository this binary was built in, for beckon's config check when beckon is stopped
+    // (a copy of the binary runs from ~/Applications and cannot find it by its own path).
+    let repo = sys::beckon_install(None).1.map(|r| r.display().to_string()).unwrap_or_default();
     if cfg!(target_os = "macos") {
         let file = launch_agent();
-        // The menu bar app is not restarted after Quit (a clean exit), only after a crash.
+        // The menu bar app runs from beckon.app, so the Dock and the app switcher show its name
+        // and logo. It is not restarted after Quit (a clean exit), only after a crash.
         let (args, keep_alive, kind) = match listen {
-            None => (vec![exe.clone(), "app".to_string()], "<dict><key>SuccessfulExit</key><false/></dict>", "Interactive"),
+            None => (vec![app_bundle(&exe, &repo), "app".to_string()], "<dict><key>SuccessfulExit</key><false/></dict>", "Interactive"),
             Some(l) => (vec![exe.clone(), "--listen".to_string(), l.to_string()], "<true/>", "Background"),
         };
         let args: String = args.iter().map(|a| format!("<string>{}</string>", xml(a))).collect();
@@ -518,7 +522,7 @@ fn install(listen: Option<&str>, token: &str) {
 <dict>
   <key>Label</key><string>{UI_LABEL}</string>
   <key>ProgramArguments</key><array>{args}</array>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>{}</string></dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>{}</string><key>BECKON_REPO</key><string>{}</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key>{keep_alive}
   <key>ThrottleInterval</key><integer>10</integer>
@@ -528,6 +532,7 @@ fn install(listen: Option<&str>, token: &str) {
 </plist>
 "#,
             xml(&path_env),
+            xml(&repo),
             xml(&logs.join("ui.log").display().to_string())
         );
         let _ = fs::create_dir_all(file.parent().unwrap());
@@ -537,9 +542,6 @@ fn install(listen: Option<&str>, token: &str) {
         let ok = Command::new("launchctl").args(["bootstrap", &domain, &file.display().to_string()]).status().map(|s| s.success()).unwrap_or(false);
         if !ok {
             die("launchctl bootstrap failed");
-        }
-        if listen.is_none() {
-            app_bundle(&exe);
         }
     } else {
         let listen = listen.unwrap_or(DEFAULT_LISTEN);
@@ -559,11 +561,14 @@ fn install(listen: Option<&str>, token: &str) {
     }
 }
 
-/// ~/Applications/beckon.app, so Spotlight and Launchpad find it. It starts the menu bar app, or,
-/// when that is already running, opens its window.
-fn app_bundle(exe: &str) {
-    let app = home_dir().join("Applications/beckon.app/Contents");
-    let _ = fs::create_dir_all(app.join("MacOS"));
+/// ~/Applications/beckon.app, with the logo as its icon, so Spotlight, Launchpad and the Dock show
+/// beckon. It holds a copy of this binary: started from there with no arguments it is the menu bar
+/// app, or, when that is already running, opens its window. Returns the path of that copy.
+fn app_bundle(exe: &str, repo: &str) -> String {
+    let app = home_dir().join("Applications/beckon.app");
+    let contents = app.join("Contents");
+    let _ = fs::create_dir_all(contents.join("MacOS"));
+    let _ = fs::create_dir_all(contents.join("Resources"));
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -573,22 +578,50 @@ fn app_bundle(exe: &str) {
   <key>CFBundleDisplayName</key><string>beckon</string>
   <key>CFBundleIdentifier</key><string>{UI_LABEL}</string>
   <key>CFBundleExecutable</key><string>beckon</string>
+  <key>CFBundleIconFile</key><string>beckon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>{}</string>
+  <key>CFBundleVersion</key><string>{v}</string>
+  <key>CFBundleShortVersionString</key><string>{v}</string>
   <key>LSUIElement</key><true/>
+  <key>LSEnvironment</key><dict><key>BECKON_REPO</key><string>{}</string></dict>
 </dict>
 </plist>
 "#,
-        env!("CARGO_PKG_VERSION")
+        xml(repo),
+        v = env!("CARGO_PKG_VERSION")
     );
-    let script = format!("#!/bin/sh\nexec '{}' app\n", exe.replace('\'', r"'\''"));
-    let run = app.join("MacOS/beckon");
-    let ok = fs::write(app.join("Info.plist"), plist).is_ok()
-        && fs::write(&run, script).is_ok()
-        && fs::set_permissions(&run, fs::Permissions::from_mode(0o755)).is_ok();
+    let run = contents.join("MacOS/beckon");
+    // Replace the file rather than write into it: the old copy may be running.
+    let _ = fs::remove_file(&run);
+    let ok = fs::write(contents.join("Info.plist"), plist).is_ok() && fs::copy(exe, &run).is_ok();
     if !ok {
-        eprintln!("beckon-ui: could not write {}", app.display());
+        die(&format!("could not write {}", app.display()));
     }
+    icns(&contents.join("Resources/beckon.icns"));
+    // Sign the bundle for this machine (ad hoc), so macOS treats it as one app.
+    let _ = Command::new("codesign").args(["--force", "--sign", "-", &app.display().to_string()]).output();
+    // Ask Launch Services to read the new icon.
+    let _ = Command::new("touch").arg(&app).status();
+    run.display().to_string()
+}
+
+/// The app icon: assets/logo-1024.png at every size macOS wants, packed with iconutil.
+fn icns(out: &Path) {
+    const LOGO: &[u8] = include_bytes!("../../assets/logo-1024.png");
+    let dir = std::env::temp_dir().join(format!("beckon-{}.iconset", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::create_dir_all(&dir);
+    let src = dir.join("logo.png");
+    if fs::write(&src, LOGO).is_err() {
+        return;
+    }
+    for (px, name) in [(16, "16x16"), (32, "16x16@2x"), (32, "32x32"), (64, "32x32@2x"), (128, "128x128"), (256, "128x128@2x"), (256, "256x256"), (512, "256x256@2x"), (512, "512x512"), (1024, "512x512@2x")] {
+        let to = dir.join(format!("icon_{name}.png"));
+        let _ = Command::new("sips").args(["-z", &px.to_string(), &px.to_string()]).arg(&src).arg("--out").arg(&to).output();
+    }
+    let _ = fs::remove_file(&src);
+    let _ = Command::new("iconutil").args(["-c", "icns"]).arg(&dir).arg("-o").arg(out).output();
+    let _ = fs::remove_dir_all(&dir);
 }
 
 fn uninstall() {
