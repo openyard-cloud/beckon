@@ -131,6 +131,14 @@ An agent can also set its own `model`, `permissionMode`, `displayName` (default:
 
 Agents post under their own name and icon when beckon's Slack app has the `chat:write.customize` scope. Apps made from an older manifest lack it: add it under *OAuth & Permissions > Bot Token Scopes* and reinstall the app. Until then agents post as beckon, with the agent's name above the answer.
 
+**An agent with its own Slack app** is a real member of the workspace: typing `@` suggests it, a tag shows as a mention, and people can DM it. Give the agent `"slackApp": "QA"`, then:
+
+1. Create a Slack app from `slack-app-manifest.json` (as in [Set up](#set-up)), named after the agent, like *Beckon-QA*, and install it.
+2. Under *Basic Information > App-Level Tokens*, generate a token with `connections:write`.
+3. Put both tokens in `~/.beckon/env` as `SLACK_BOT_TOKEN_QA=xoxb-...` and `SLACK_APP_TOKEN_QA=xapp-...`, invite the app to the project's channels, and restart beckon.
+
+beckon connects to each agent app too. A message reaches every app it is in, and runs once. `@Beckon-QA check the login page` goes to QA; a DM to Beckon-QA does too, and is answered there. QA posts through its own app, and when an agent hands work on, its `@qa` becomes a real mention of Beckon-QA. `"slackApp": "main"` makes an agent post as beckon itself, with beckon's name and icon, like the project's default agent. Without its tokens, an agent posts through beckon under its own name, as above.
+
 ### Managing projects from Slack
 
 Mention beckon with one of these, or send it in a DM. Only the members in `users` can use them. Each one edits `~/.beckon/config.json` and takes effect at once, without a restart.
