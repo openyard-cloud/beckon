@@ -28,3 +28,10 @@ test('formats durations and code spans', () => {
   assert.equal(duration(3_720_000), '1h 02m');
   assert.equal(codeSpan('echo `hi`'), "`echo 'hi'`");
 });
+
+test('a subagent report is taken out of the Agent tool result frame', async () => {
+  const { agentReport } = await import('../src/daemon.mjs');
+  assert.equal(agentReport('[Subagent hand-back] ... The report follows:\n  line one\n\n  - two\nagentId: x\n<usage>n</usage>'), 'line one\n\n- two');
+  assert.equal(agentReport('Async agent launched successfully. (metadata)'), null);
+  assert.equal(agentReport('plain answer\nagentId: x'), 'plain answer');
+});

@@ -107,13 +107,14 @@ if (run || perm) {
   if (/SUBAGENTS/.test(prompt)) {
     // the lead starts two project agents as subagents, which run in the background and report
     emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-dev', subagent_type: 'senior-dev', description: 'Build the page' });
-    emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-qa', subagent_type: 'qa', description: 'Check the page' });
+    emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-qa', subagent_type: 'qa', description: 'Check the page', is_backgrounded: false });
     emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-x', subagent_type: 'Explore', description: 'Look around' });
     emit({ type: 'assistant', parent_tool_use_id: 'tu-dev', message: { content: [{ type: 'text', text: 'Working on it' }] } });
     emit({ type: 'assistant', parent_tool_use_id: 'tu-dev', message: { content: [{ type: 'text', text: 'Built the page in PR #7.\nAsk @qa to check it.' }] } });
-    emit({ type: 'assistant', parent_tool_use_id: 'tu-qa', message: { content: [{ type: 'text', text: 'Checked: 3 of 3 pass.' }] } });
     emit({ type: 'system', subtype: 'task_notification', tool_use_id: 'tu-dev', status: 'completed' });
     emit({ type: 'system', subtype: 'task_notification', tool_use_id: 'tu-qa', status: 'completed' });
+    // qa ran in the foreground: its report is the Agent tool result, framed and indented
+    emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu-qa', content: [{ type: 'text', text: '[Subagent hand-back] The text below is the final report. The report follows:\n  Checked: 3 of 3 pass.\n\n  - login ok\nagentId: abc\n<usage>subagent_tokens: 1</usage>' }] }] } });
   }
   const lead = /SUBAGENTS/.test(prompt) ? 'Team done: page built and checked.' : me === 'pm' && /have finished/.test(prompt) ? 'All done, checked.' : me === 'pm' && /TEAMPLAN/.test(prompt) ? 'Plan:\n@dev build it\nwith care\n\n@qa check it' : null;
   const result = lead ?? (/PINGPONG/.test(prompt) ? `done by ${me}\n@${me === 'qa' ? 'dev' : 'qa'} PINGPONG` : `echo: ${prompt.trim()}`);

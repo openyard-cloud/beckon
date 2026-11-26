@@ -39,6 +39,24 @@ function firstLine(text) {
   return String(text).split('\n').find((l) => l.trim()) ?? '';
 }
 
+// A subagent's report, from the Agent tool's result: Claude Code frames it ("... The report
+// follows:") and indents each line. Null for a background launch, whose report comes as messages.
+export function agentReport(text) {
+  const s = String(text ?? '');
+  if (/^\s*Async agent launched/i.test(s)) return null;
+  const marker = 'The report follows:';
+  const at = s.indexOf(marker);
+  const out = [];
+  for (const line of (at >= 0 ? s.slice(at + marker.length).replace(/^\n/, '') : s).split('\n')) {
+    if (at >= 0) {
+      if (line.startsWith('  ') || !line.trim()) out.push(line.slice(2));
+      else break;
+    } else if (/^agentId: /.test(line) || line.startsWith('<usage>')) break;
+    else out.push(line);
+  }
+  return out.join('\n').trim() || null;
+}
+
 // Bold the opening summary sentence so it reads as the headline of the answer.
 export function emphasizeSummary(text) {
   const lines = String(text).split('\n');
@@ -1053,7 +1071,7 @@ export class Beckon {
     if (e.type === 'system' && e.subtype === 'task_started' && e.subagent_type && e.tool_use_id) {
       const agent = Object.values(project?.agents ?? {}).find((a) => a.agent === e.subagent_type || a.name === e.subagent_type);
       if (!agent) return;
-      const sub = { agent, description: e.description || e.subagent_type, text: '' };
+      const sub = { agent, description: e.description || e.subagent_type, text: '', background: e.is_backgrounded !== false };
       run.subs.set(e.tool_use_id, sub);
       const label = `:hourglass_flowing_sand: ${sub.description}`;
       sub.posted = this.post(t.channel, t.threadTs, `${sub.description}…`, [{ type: 'context', elements: [{ type: 'mrkdwn', text: label }] }], agent).catch(() => null);
@@ -1064,10 +1082,36 @@ export class Beckon {
       if (text) run.subs.get(e.parent_tool_use_id).text = text;
       return;
     }
+    // A subagent in the foreground hands its report back as the Agent tool's result, which comes
+    // just after its notification; one in the background speaks in messages before it.
+    if (e.type === 'user') {
+      for (const c of e.message?.content ?? []) {
+        if (c.type !== 'tool_result' || !run.subs.has(c.tool_use_id)) continue;
+        const raw = Array.isArray(c.content) ? c.content.map((x) => x.text ?? '').join('\n') : c.content;
+        const report = agentReport(raw);
+        if (!report) continue;
+        const sub = run.subs.get(c.tool_use_id);
+        sub.text = report;
+        sub.final = true;
+        if (sub.status) await this.subagentDone(t, project, sub);
+      }
+      return;
+    }
     if (e.type === 'system' && e.subtype === 'task_notification' && run.subs.has(e.tool_use_id)) {
       const sub = run.subs.get(e.tool_use_id);
-      if (sub.done) return;
-      sub.done = true;
+      sub.status = e.status;
+      if (sub.final || (sub.background && sub.text)) return this.subagentDone(t, project, sub);
+      // wait a little for the report, then post what there is
+      const timer = setTimeout(() => this.subagentDone(t, project, sub).catch(() => {}), 10_000);
+      timer.unref?.();
+    }
+  }
+
+  async subagentDone(t, project, sub) {
+    if (sub.done) return;
+    sub.done = true;
+    const e = { status: sub.status ?? 'completed' };
+    {
       const posted = await sub.posted;
       const body = sub.text || (e.status === 'completed' ? 'Done.' : `Stopped (${e.status}).`);
       const pieces = chunkMarkdown(emphasizeSummary(this.linkAgents(body, project)));

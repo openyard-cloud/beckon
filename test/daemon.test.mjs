@@ -876,7 +876,9 @@ test('the lead runs its team as subagents: each member posts under its own app, 
     assert.ok(beDone, 'dev\'s report replaces its working message');
     assert.match(JSON.stringify(beDone.blocks), /<@UQA> to check it/, 'its @qa is a real mention');
     assert.ok(!JSON.stringify(beDone.blocks).includes('Working on it'), 'only its last words');
-    assert.ok(qaSlack.find('chat.update').some((c) => /Checked: 3 of 3 pass/.test(JSON.stringify(c.body.blocks))));
+    const qaDone = qaSlack.find('chat.update').map((c) => c.body).find((b) => /Checked: 3 of 3 pass/.test(JSON.stringify(b.blocks)));
+    assert.ok(qaDone, 'a foreground member posts the report from the Agent tool result');
+    assert.ok(/login ok/.test(JSON.stringify(qaDone.blocks)) && !/agentId|usage|hand-back/.test(JSON.stringify(qaDone.blocks)), 'only the report, without the frame');
     assert.ok(!slack.posts().some((p) => /Look around/.test(p.text)), 'a subagent that is not a project agent gets no message');
 
     const report = slack.posts().find((p) => /Team done/.test(p.text));
