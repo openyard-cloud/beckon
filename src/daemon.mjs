@@ -17,6 +17,7 @@ const TICK_MS = 15_000;
 const GC_MS = 6 * 60 * 60 * 1000;
 const STOP_WORDS = /^(stop|cancel|abort)[.!]*$/i;
 const PROJECT_PREFIX = /^([a-z0-9][a-z0-9._-]*):\s*/i;
+const AGENT_TAG = /^@([a-z0-9][a-z0-9_-]*)\b[:,]?\s*/i;
 
 const DEFAULT_WATCH_PROMPT = [
   'A monitoring alert was just posted. Find out what went wrong and why: read the logs, errors and recent deploys of the service it names (with the CLIs and connectors you have), and the code involved.',
@@ -257,11 +258,27 @@ export class Beckon {
     return `${this.teamUrl.replace(/\/?$/, '/')}archives/${channel}/p${threadTs.replace('.', '')}`;
   }
 
-  async post(channel, threadTs, text, blocks) {
+  // `as`: an agent's name and icon (needs chat:write.customize; without it, beckon's own).
+  async post(channel, threadTs, text, blocks, as = null) {
     const body = { channel, text, unfurl_links: false, unfurl_media: false };
     if (threadTs) body.thread_ts = threadTs;
     if (blocks) body.blocks = blocks;
-    return this.slack.call('chat.postMessage', body);
+    if (as && !this.noAgentIdentity) {
+      body.username = as.displayName;
+      if (as.icon.startsWith(':')) body.icon_emoji = as.icon;
+      else body.icon_url = as.icon;
+    }
+    try {
+      return await this.slack.call('chat.postMessage', body);
+    } catch (e) {
+      if (!body.username || !/missing_scope|not_allowed|invalid_arg/i.test(e.message)) throw e;
+      this.noAgentIdentity = true;
+      this.log('Agents post as beckon: add the chat:write.customize scope to the Slack app and reinstall it to give each agent its name and icon.');
+      delete body.username;
+      delete body.icon_emoji;
+      delete body.icon_url;
+      return this.slack.call('chat.postMessage', body);
+    }
   }
 
   async postMarkdown(channel, threadTs, markdown) {
@@ -297,7 +314,8 @@ export class Beckon {
     const isDM = ev.channel_type === 'im' || String(ev.channel).startsWith('D');
     const key = ev.thread_ts ? `${ev.channel}:${ev.thread_ts}` : null;
     const known = key && this.state.threads[key];
-    if (!mentioned && !isDM && !known) return;
+    const tagged = !mentioned && !known && !ev.thread_ts && this.channelProjects.has(ev.channel) && !!this.agentPrefix(this.channelProjects.get(ev.channel), slackToPlain(ev.text, this.botUserId), { tagOnly: true });
+    if (!mentioned && !isDM && !known && !tagged) return;
     if (!this.allowed(ev.user)) {
       this.log(`Ignored a message from ${ev.user}, who is not in "users"`);
       return;
@@ -317,6 +335,7 @@ export class Beckon {
         return this.post(ev.channel, ev.thread_ts, `The project \`${known.project}\` of this thread is no longer in beckon. Start a new message to work on another project.`);
       }
       // "qa: check it" hands the thread to another agent of its project, from this turn on.
+      known.handoffs = 0;
       let rest = text;
       const named = this.agentPrefix(known.project, text);
       if (named) {
@@ -376,10 +395,11 @@ export class Beckon {
   }
 
   // "qa: ..." at the start of a message, where qa is one of the project's agents (case ignored).
-  agentPrefix(projectName, text) {
+  // "@qa ..." (a tag) works anywhere a name prefix does; `tagOnly` accepts only the tag.
+  agentPrefix(projectName, text, { tagOnly = false } = {}) {
     const agents = this.config.projects[projectName]?.agents;
     if (!agents || !Object.keys(agents).length) return null;
-    const m = text.match(PROJECT_PREFIX) ?? text.match(/^([a-z0-9][a-z0-9_-]*)\s*$/i);
+    const m = text.match(AGENT_TAG) ?? (tagOnly ? null : text.match(PROJECT_PREFIX) ?? text.match(/^([a-z0-9][a-z0-9_-]*)\s*$/i));
     const agent = m && findName(agents, m[1]);
     return agent ? { agent, rest: text.slice(m[0].length).trim() } : null;
   }
@@ -464,7 +484,7 @@ export class Beckon {
       '• Mention me with a task in a project\'s channel, or DM me (DMs go to the default project).',
       '• Start with `project:` to pick a project anywhere, like `hush: fix the build`. Case does not matter.',
       '• Each task gets its own thread and git worktree. Reply in the thread to continue; `stop` stops it.',
-      '• A project can have agents, like `pm`, `dev`, `designer` and `qa`, each with its own skills. Start with the agent\'s name to give it the task, like `qa: check the booking flow`. In a thread, `dev: fix it` hands the thread to another agent.',
+      '• A project can have agents, like `@pm`, `@dev`, `@designer` and `@qa`, each with its own skills. Tag one in the project\'s channel to give it a task, like `@qa check the booking flow`. In a thread, `@dev fix it` hands the thread to another agent, and agents tag each other to hand work on.',
       '• Risky actions (deploys, pushes to main, merges, migrations, releases) wait for an Allow button.',
       '',
       '*Commands* (mention me, or DM me)',
@@ -708,6 +728,7 @@ export class Beckon {
     const t = {
       project,
       agent,
+      handoffs: 0,
       channel,
       threadTs,
       sessionId: randomUUID(),
@@ -755,7 +776,7 @@ export class Beckon {
 
   systemPrompt(t, project, user, ref) {
     const lines = [
-      `You are working through beckon: this request came from Slack${user === 'watch' ? ', from an alert in a channel beckon watches' : user && user !== 'schedule' ? `, from <@${user}>` : ' on a schedule'}, and your final message is posted back to the Slack thread as markdown.`,
+      `You are working through beckon: this request came from Slack${user === 'watch' ? ', from an alert in a channel beckon watches' : String(user).startsWith('agent:') ? `, from the project's ${user.slice(6)} agent, which handed this thread to you; its message is above in the conversation` : user && user !== 'schedule' ? `, from <@${user}>` : ' on a schedule'}, and your final message is posted back to the Slack thread as markdown.`,
       '- Start the final message with one sentence that sums up what you did or found, on its own line. Then add details only if they help: links to what you opened (pull requests, deploys) and anything that needs a decision. Keep it short.',
       '- Nobody can answer questions during a run. If you need a decision, end the turn and ask; the answer arrives as the next message.',
       `- You are in a git worktree of the "${project.name}" repository (${project.path})${ref ? `, started from ${ref} on a detached HEAD` : ''}. Create a branch before committing, following the repository's own conventions.`,
@@ -771,7 +792,11 @@ export class Beckon {
     const agent = this.agentOf(t, project);
     if (agent) {
       const others = Object.keys(project.agents).filter((n) => n !== agent.name);
-      lines.push(`- In this thread you are the project's *${agent.name}* agent${agent.description ? ` (${agent.description})` : ''}. Stay in that role.${others.length ? ` The project's other agents are ${others.join(', ')}; the user hands the thread to one by starting a message with its name, like \`${others[0]}: ...\`. When work belongs to another role, finish your part and say which agent should take it next and what to send it.` : ''}`);
+      lines.push(`- In this thread you are the project's *${agent.name}* agent${agent.description ? ` (${agent.description})` : ''}. Stay in that role and do your part only.`);
+      if (others.length) {
+        const list = others.map((n) => `@${n}${project.agents[n].description ? ` (${project.agents[n].description})` : ''}`).join(', ');
+        lines.push(`- The project's other agents work in the same Slack channel: ${list}. People give one a task by tagging it, like "@${others[0]} ...". To hand the work on when the next step belongs to another role, end your final message with one line that starts with the tag and says what to do, like "@${others[0]} check the booking flow in PR #12". beckon then gives that agent this thread, worktree and conversation. Hand on only when that role is really needed next; never hand back and forth, and if a person must decide something, ask them instead of tagging an agent.`);
+      }
     }
     if (project.instructions) lines.push('', project.instructions);
     return lines.join('\n');
@@ -802,7 +827,7 @@ export class Beckon {
     this.running.set(key, run);
 
     try {
-      const first = await this.post(t.channel, t.threadTs, 'Working…', this.progressBlocks(key, run));
+      const first = await this.post(t.channel, t.threadTs, 'Working…', this.progressBlocks(key, run), this.agentOf(t, project));
       run.progressTs = first.ts;
       run.ticker = setInterval(() => this.refresh(key), 30_000);
       run.ticker.unref?.();
@@ -860,6 +885,7 @@ export class Beckon {
       clearTimeout(run.refreshTimer);
       this.denyApprovals(key, 'The run ended.');
       await this.finishRun(key, run).catch((e) => this.log(`Could not post the result in ${key}: ${e.message}`));
+      if (run.status === 'done') await this.handOff(key, run.reply).catch((e) => this.log(`Hand-over in ${key} failed: ${e.message}`));
       this.running.delete(key);
       t.lastActive = this.now();
       this.state.save();
@@ -918,6 +944,31 @@ export class Beckon {
     return res;
   }
 
+  // An agent's answer that ends with "@qa <task>" gives the thread to that agent, up to
+  // maxHandoffs times in a row without a person's message.
+  async handOff(key, reply) {
+    const t = this.state.threads[key];
+    const project = this.config.projects[t?.project];
+    const from = this.agentOf(t, project);
+    if (!from || !reply) return;
+    const lines = reply.trim().split('\n');
+    for (let i = lines.length - 1; i >= Math.max(0, lines.length - 4); i--) {
+      const m = lines[i].replace(/^[\s*_>]+/, '').match(AGENT_TAG);
+      const to = m && findName(project.agents, m[1]);
+      if (!to || to === from.name) continue;
+      if ((t.handoffs ?? 0) >= this.config.maxHandoffs) {
+        await this.post(t.channel, t.threadTs, `Not handing this to *${to}*: ${t.handoffs} hand-overs in a row without a message from a person. Reply here to continue, like \`@${to} ...\`.`);
+        return;
+      }
+      const task = [lines[i].replace(/^[\s*_>]+/, '').slice(m[0].length).replace(/[*_]+$/, ''), ...lines.slice(i + 1)].join('\n').trim();
+      t.agent = to;
+      t.handoffs = (t.handoffs ?? 0) + 1;
+      this.state.save();
+      this.enqueue(key, { text: task || `Continue from the ${from.name} agent's message above.`, user: `agent:${from.name}` });
+      return;
+    }
+  }
+
   // The thread's agent, while the project still has it.
   agentOf(t, project) {
     return (t.agent && project?.agents?.[t.agent]) || null;
@@ -947,9 +998,10 @@ export class Beckon {
     const summary = reply ? oneLine(firstLine(reply), 300) : run.progress.title(this.now(), run.status);
     const blocks = [...this.agentBlock(key), run.progress.planBlock(this.now(), run.status)];
     if (pieces.length) blocks.push({ type: 'markdown', text: pieces[0] });
-    await this.post(t.channel, t.threadTs, summary, blocks);
+    const as = this.agentOf(t, this.config.projects[t.project]);
+    await this.post(t.channel, t.threadTs, summary, blocks, as);
     for (const piece of pieces.slice(1)) {
-      await this.post(t.channel, t.threadTs, oneLine(piece, 300), [{ type: 'markdown', text: piece }]);
+      await this.post(t.channel, t.threadTs, oneLine(piece, 300), [{ type: 'markdown', text: piece }], as);
     }
     if (run.progressTs) {
       await this.slack.call('chat.delete', { channel: t.channel, ts: run.progressTs }).catch(() => {});

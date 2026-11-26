@@ -206,6 +206,8 @@ export function validateConfig(raw) {
     watches,
     approvalTimeoutMinutes: num('approvalTimeoutMinutes', 60, 1, 1440),
     maxParallel: num('maxParallel', 3, 1, 20),
+    // Agents handing a thread to each other: at most this many in a row without a person's message.
+    maxHandoffs: num('maxHandoffs', 3, 0, 10),
     keepDays: num('keepDays', 7, 1, 365),
     shutdownGraceMinutes: num('shutdownGraceMinutes', 30, 0, 240),
     claudePath: typeof raw.claudePath === 'string' ? expandHome(raw.claudePath) : 'claude',
@@ -216,6 +218,7 @@ export function validateConfig(raw) {
 }
 
 export const AGENT_NAME = /^[a-z0-9][a-z0-9_-]*$/i;
+const AGENT_ICONS = { pm: ':clipboard:', dev: ':hammer_and_wrench:', designer: ':art:', design: ':art:', qa: ':mag:' };
 
 // A project's agents: the roles a task can be given to, like pm, dev, designer and qa. Each runs
 // one of Claude Code's agents (`claude --agent`, defined in the repository's .claude/agents/ or in
@@ -237,10 +240,11 @@ function agentsConfig(raw, at, projectChannels, errors) {
       errors.push(`${where}: must be an object; {} runs the Claude Code agent of the same name`);
       continue;
     }
-    for (const k of ['agent', 'description', 'model']) {
+    for (const k of ['agent', 'description', 'model', 'displayName', 'icon']) {
       if (a[k] !== undefined && (typeof a[k] !== 'string' || !a[k])) errors.push(`${where}.${k}: must be a string`);
     }
     if (typeof a.agent === 'string' && a.agent && !/^[a-z0-9][a-z0-9_:-]*$/i.test(a.agent)) errors.push(`${where}.agent: the name of a Claude Code agent, like "qa"`);
+    if (typeof a.icon === 'string' && a.icon && !/^:[a-z0-9_+-]+:$/i.test(a.icon) && !/^https:\/\//.test(a.icon)) errors.push(`${where}.icon: an emoji like ":mag:" or an https image address`);
     const skills = a.skills === undefined ? [] : typeof a.skills === 'string' ? [a.skills] : a.skills;
     if (!isStringArray(skills)) errors.push(`${where}.skills: a folder of skills (it holds skills/<name>/SKILL.md), or a list of them; relative to the repository, or absolute`);
     if (a.permissionMode !== undefined && !PERMISSION_MODES.includes(a.permissionMode)) errors.push(`${where}.permissionMode: one of ${PERMISSION_MODES.join(', ')}`);
@@ -253,6 +257,9 @@ function agentsConfig(raw, at, projectChannels, errors) {
       name: key,
       agent: typeof a.agent === 'string' && a.agent ? a.agent : key,
       description: typeof a.description === 'string' ? a.description : null,
+      // How its messages appear in Slack (needs the chat:write.customize scope).
+      displayName: typeof a.displayName === 'string' && a.displayName ? a.displayName : key.length <= 3 ? key.toUpperCase() : key[0].toUpperCase() + key.slice(1),
+      icon: typeof a.icon === 'string' && a.icon ? a.icon : AGENT_ICONS[key.toLowerCase()] ?? ':robot_face:',
       skills: isStringArray(skills) ? skills.map(expandHome) : [],
       model: typeof a.model === 'string' && a.model ? a.model : null,
       permissionMode: PERMISSION_MODES.includes(a.permissionMode) ? a.permissionMode : null,
