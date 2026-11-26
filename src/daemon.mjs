@@ -374,6 +374,8 @@ export class Beckon {
       }
       // "qa: check it" hands the thread to another agent of its project, from this turn on.
       known.handoffs = 0;
+      known.queue = [];
+      known.leadRun = false;
       let rest = text;
       const appAgent = tagApp && this.agentOnApp(known.project, tagApp);
       const named = appAgent ? { agent: appAgent, rest: text } : this.agentPrefix(known.project, text);
@@ -852,8 +854,16 @@ export class Beckon {
     if (agent) {
       const others = Object.keys(project.agents).filter((n) => n !== agent.name);
       lines.push(`- In this thread you are the project's *${agent.name}* agent${agent.description ? ` (${agent.description})` : ''}. Stay in that role and do your part only.`);
-      if (others.length) {
-        const list = others.map((n) => `@${n}${project.agents[n].description ? ` (${project.agents[n].description})` : ''}`).join(', ');
+      const list = others.map((n) => `@${n}${project.agents[n].description ? ` (${project.agents[n].description})` : ''}`).join(', ');
+      if (project.lead && others.length) {
+        if (agent.name === project.lead) {
+          lines.push(`- You lead this project's team: ${list}. A person gives you the work; you plan it and get it done through the team, without asking the person to pass anything on. Break the request into tasks and assign them by ending your message with one line per task that starts with the tag, like "@${others[0]} <the task, with what it needs to know>". They run one after another in the order you write them, in this thread and worktree, and each sees the conversation so far, so order them (for example design, then code, then testing). When they have all finished you get their reports: check them, then assign what comes next (for example @qa after the code, or the fixes for what testing found), or, when the work is done and checked, write the final report for the person, with no tags. Do your own part (understanding the request, specs, decisions, numbers) yourself, and leave code, design and testing to the team. Ask the person only for decisions that are really theirs: then end the turn with the question and no tags.`);
+        } else if (String(user).startsWith('agent:')) {
+          lines.push(`- You are on a team led by @${project.lead}, which gave you this task (above). Do it fully, then report what you did, what you found and what is left. Do not tag other agents: @${project.lead} reads your report and decides what comes next. If something needs a decision only a person can make, say so in your report.`);
+        } else {
+          lines.push(`- Your team is led by @${project.lead}; the others are ${list}. This task came straight from a person: do it and report to them. Do not tag other agents unless the person asks you to.`);
+        }
+      } else if (others.length) {
         // (each tag shows in Slack as a real mention of that agent when it has its own app)
         lines.push(`- The project's other agents work in the same Slack channel: ${list}. People give one a task by tagging it, like "@${others[0]} ...". To hand the work on when the next step belongs to another role, end your final message with one line that starts with the tag and says what to do, like "@${others[0]} check the booking flow in PR #12". beckon then gives that agent this thread, worktree and conversation. Hand on only when that role is really needed next; never hand back and forth, and if a person must decide something, ask them instead of tagging an agent.`);
       }
@@ -1012,6 +1022,7 @@ export class Beckon {
     const project = this.config.projects[t?.project];
     const from = this.agentOf(t, project);
     if (!from || !reply) return;
+    if (project.lead) return this.leadHandOff(key, t, project, from, reply);
     const lines = reply.trim().split('\n');
     for (let i = lines.length - 1; i >= Math.max(0, lines.length - 4); i--) {
       const m = lines[i].replace(/^[\s*_>]+/, '').match(AGENT_TAG);
@@ -1028,6 +1039,63 @@ export class Beckon {
       this.enqueue(key, { text: task || `Continue from the ${from.name} agent's message above.`, user: `agent:${from.name}` });
       return;
     }
+  }
+
+  // Tasks in an agent's answer: each line that starts with another agent's tag, with the lines
+  // under it until a blank line.
+  assignments(reply, project, from) {
+    const out = [];
+    let cur = null;
+    for (const raw of String(reply ?? '').split('\n')) {
+      const line = raw.replace(/^[\s*_>•-]+/, '');
+      const m = line.match(AGENT_TAG);
+      const to = m && findName(project.agents, m[1]);
+      if (to && to !== from) {
+        cur = { agent: to, lines: [line.slice(m[0].length).replace(/[*_]+$/, '')] };
+        out.push(cur);
+      } else if (cur && raw.trim()) cur.lines.push(raw.trim());
+      else cur = null;
+    }
+    return out.map((a) => ({ agent: a.agent, task: a.lines.join('\n').trim() }));
+  }
+
+  // A team with a lead: the lead's answer assigns tasks, which run one after another in this
+  // thread; when they are done the lead gets the turn back. A lead's answer without tasks is its
+  // report to the person. At most maxHandoffs agent turns in a row without a person's message.
+  async leadHandOff(key, t, project, from, reply) {
+    const lead = project.lead;
+    const next = async (agent, text, user) => {
+      if ((t.handoffs ?? 0) >= this.config.maxHandoffs) {
+        t.queue = [];
+        t.leadRun = false;
+        this.state.save();
+        await this.post(t.channel, t.threadTs, `Stopped passing work on: ${t.handoffs} agent turns in a row without a message from a person. Reply here to carry on.`);
+        return;
+      }
+      t.agent = agent;
+      t.handoffs = (t.handoffs ?? 0) + 1;
+      this.state.save();
+      this.enqueue(key, { text, user });
+    };
+    if (from.name === lead) {
+      const tasks = this.assignments(reply, project, lead);
+      if (!tasks.length) {
+        t.queue = [];
+        t.leadRun = false;
+        this.state.save();
+        return;
+      }
+      t.leadRun = true;
+      t.queue = tasks.slice(1);
+      return next(tasks[0].agent, tasks[0].task || 'Do your part of the plan above.', `agent:${lead}`);
+    }
+    // A member finished. Work it was given by the lead goes on; a person's direct task ends here.
+    if (!t.leadRun) return;
+    if (t.queue?.length) {
+      const n = t.queue.shift();
+      return next(n.agent, n.task || 'Do your part of the plan above.', `agent:${lead}`);
+    }
+    return next(lead, 'The agents you assigned have finished; their reports are above. Check them, then decide what comes next: assign more work, or, when everything is done and checked, write the final report for the person who asked.', `agent:${from.name}`);
   }
 
   // The thread's agent, while the project still has it.
@@ -1056,7 +1124,13 @@ export class Beckon {
   async finishRun(key, run) {
     const t = this.state.threads[key];
     run.progress.finish(run.status);
-    const reply = this.linkAgents((run.reply ?? '').trim(), this.config.projects[t.project]);
+    const project = this.config.projects[t.project];
+    let text = (run.reply ?? '').trim();
+    // The lead's report at the end of team work: let the person who asked know.
+    if (project?.lead && t.agent === project.lead && t.leadRun && text && run.status === 'done' && !this.assignments(text, project, project.lead).length && /^[UW][A-Z0-9]+$/.test(t.createdBy ?? '')) {
+      text = `<@${t.createdBy}> ${text}`;
+    }
+    const reply = this.linkAgents(text, project);
     const pieces = reply ? chunkMarkdown(emphasizeSummary(reply)) : [];
     const summary = reply ? oneLine(firstLine(reply), 300) : run.progress.title(this.now(), run.status);
     const blocks = [...this.agentBlock(key), run.progress.planBlock(this.now(), run.status)];

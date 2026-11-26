@@ -120,6 +120,7 @@ export function validateConfig(raw) {
       }
       const agents = agentsConfig(p.agents, at, isStringArray(channels) ? channels : [], errors);
       if (p.defaultAgent !== undefined && !agents[p.defaultAgent]) errors.push(`${at}.defaultAgent: "${p.defaultAgent}" is not one of this project's agents`);
+      if (p.lead !== undefined && !agents[p.lead]) errors.push(`${at}.lead: "${p.lead}" is not one of this project's agents`);
       projects[name] = {
         name,
         path,
@@ -133,6 +134,8 @@ export function validateConfig(raw) {
         mcpConfig: typeof p.mcpConfig === 'string' ? expandHome(p.mcpConfig) : null,
         agents,
         defaultAgent: typeof p.defaultAgent === 'string' && agents[p.defaultAgent] ? p.defaultAgent : null,
+        // The agent that leads the others: it plans the work and assigns it, and gets their reports.
+        lead: typeof p.lead === 'string' && agents[p.lead] ? p.lead : null,
       };
     }
   }
@@ -207,7 +210,7 @@ export function validateConfig(raw) {
     approvalTimeoutMinutes: num('approvalTimeoutMinutes', 60, 1, 1440),
     maxParallel: num('maxParallel', 3, 1, 20),
     // Agents handing a thread to each other: at most this many in a row without a person's message.
-    maxHandoffs: num('maxHandoffs', 3, 0, 10),
+    maxHandoffs: num('maxHandoffs', 3, 0, 30),
     keepDays: num('keepDays', 7, 1, 365),
     shutdownGraceMinutes: num('shutdownGraceMinutes', 30, 0, 240),
     claudePath: typeof raw.claudePath === 'string' ? expandHome(raw.claudePath) : 'claude',

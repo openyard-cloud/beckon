@@ -131,6 +131,8 @@ An agent can also set its own `model`, `permissionMode`, `displayName` (default:
 
 Agents post under their own name and icon when beckon's Slack app has the `chat:write.customize` scope. Apps made from an older manifest lack it: add it under *OAuth & Permissions > Bot Token Scopes* and reinstall the app. Until then agents post as beckon, with the agent's name above the answer.
 
+**A lead agent runs the team.** With `"lead": "pm"`, you give the work to the lead only, and it gets it done through the others without you passing anything on. The lead breaks the request into tasks and ends its answer with one line per task, like `@dev build the booking page` and `@qa check it on the web app`. beckon runs them one after another, in that order, in the same thread and worktree. Each member reports back instead of tagging anyone, and when they have all finished, the lead gets their reports and either assigns what comes next (the fixes for what QA found, say) or writes the final report, which mentions you. A task you give a member directly stays with that member. `maxHandoffs` counts agent turns in a row without a person's message, so raise it for a team (12 covers spec, code, design, testing and a round of fixes); when it runs out, beckon stops and waits for you.
+
 **An agent with its own Slack app** is a real member of the workspace: typing `@` suggests it, a tag shows as a mention, and people can DM it. Give the agent `"slackApp": "QA"`, then:
 
 1. Create a Slack app from `slack-app-manifest.json` (as in [Set up](#set-up)), named after the agent, like *Beckon-QA*, and install it.
@@ -351,6 +353,7 @@ Limits:
       "mcpConfig": "~/.beckon/mcp-screen.json", // optional, extra MCP servers for this project's runs
       "agents": { "qa": { "skills": ".claude/roles/qa" } }, // optional, see "Agents"
       "defaultAgent": "qa",              // optional
+      "lead": "pm",                      // optional: the agent that plans and assigns work to the others
       "alwaysAsk": [
         "playwright test",                // a regex on Bash commands
         { "tool": "^(Edit|Write)$", "match": "migrations/", "label": "edit a migration" }

@@ -782,3 +782,58 @@ test('agents with their own Slack apps: a mention of the app is a task for it, i
     await close();
   }
 });
+
+test('a lead agent plans, its team works through the tasks one after another, and the lead reports back', async () => {
+  const { beckon, slack, state, claudeRuns, done, close } = await setup({
+    config: {
+      projects: { proj: { path: '/tmp', channels: ['#proj'], agents: { pm: {}, dev: {}, qa: {} }, defaultAgent: 'pm', lead: 'pm' } },
+      maxHandoffs: 5,
+    },
+  });
+  try {
+    const ask = mention('TEAMPLAN ship the booking page');
+    await beckon.handleEvent(ask);
+    await waitFor(() => slack.posts().some((p) => /All done, checked/.test(p.text)));
+    await done();
+    const runs = claudeRuns();
+    assert.deepEqual(runs.map((r) => r.argv[r.argv.indexOf('--agent') + 1]), ['pm', 'dev', 'qa', 'pm']);
+    assert.ok(slack.texts().includes('echo: build it\nwith care'), 'a task keeps the lines under its tag');
+    assert.ok(slack.texts().includes('echo: check it'));
+    const devPrompt = runs[1].argv[runs[1].argv.indexOf('--append-system-prompt') + 1];
+    assert.match(devPrompt, /team led by @pm, which gave you this task/);
+    const leadPrompt = runs[0].argv[runs[0].argv.indexOf('--append-system-prompt') + 1];
+    assert.match(leadPrompt, /You lead this project's team: @dev, @qa/);
+    const report = slack.posts().find((p) => /All done, checked/.test(p.text));
+    assert.match(report.text, /^<@U1> All done/, 'the report mentions the person who asked');
+    const t = state.threads[`CPROJ:${ask.ts}`];
+    assert.equal(t.handoffs, 3);
+    assert.equal(t.leadRun, false);
+    assert.deepEqual(t.queue, []);
+
+    // a person's direct task to a member ends with that member: the lead does not take over
+    const direct = mention('qa: look at the login page');
+    await beckon.handleEvent(direct);
+    await done();
+    assert.equal(claudeRuns().length, 5);
+    assert.equal(state.threads[`CPROJ:${direct.ts}`].agent, 'qa');
+  } finally {
+    await close();
+  }
+});
+
+test('a lead\'s team stops after maxHandoffs agent turns without a person', async () => {
+  const { beckon, slack, claudeRuns, done, close } = await setup({
+    config: {
+      projects: { proj: { path: '/tmp', channels: ['#proj'], agents: { pm: {}, dev: {}, qa: {} }, defaultAgent: 'pm', lead: 'pm' } },
+      maxHandoffs: 2,
+    },
+  });
+  try {
+    await beckon.handleEvent(mention('TEAMPLAN ship it'));
+    await waitFor(() => slack.posts().some((p) => /Stopped passing work on: 2 agent turns/.test(p.text)));
+    await done();
+    assert.deepEqual(claudeRuns().map((r) => r.argv[r.argv.indexOf('--agent') + 1]), ['pm', 'dev', 'qa']);
+  } finally {
+    await close();
+  }
+});

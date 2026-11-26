@@ -101,3 +101,11 @@ test('an agent can name its own Slack app, or beckon\'s main one', () => {
   assert.equal(config.projects.a.agents.qa.slackApp, 'QA');
   assert.equal(config.projects.a.agents.pm.slackApp, 'MAIN');
 });
+
+test('a project lead must be one of its agents', () => {
+  const ok = validateConfig({ users: ['U1'], projects: { a: { path: '/a', agents: { pm: {}, qa: {} }, lead: 'pm' } } });
+  assert.deepEqual(ok.errors, []);
+  assert.equal(ok.config.projects.a.lead, 'pm');
+  const bad = validateConfig({ users: ['U1'], projects: { a: { path: '/a', agents: { qa: {} }, lead: 'pm' } } });
+  assert.match(bad.errors.join(' '), /a\.lead: "pm" is not one of this project's agents/);
+});
