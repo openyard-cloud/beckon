@@ -35,3 +35,10 @@ test('a subagent report is taken out of the Agent tool result frame', async () =
   assert.equal(agentReport('Async agent launched successfully. (metadata)'), null);
   assert.equal(agentReport('plain answer\nagentId: x'), 'plain answer');
 });
+
+test('a subagent report is the message of its SubagentHandback call, or else its last words', async () => {
+  const { reportOf } = await import('../src/daemon.mjs');
+  assert.equal(reportOf([{ type: 'text', text: 'thinking out loud' }, { type: 'tool_use', name: 'SubagentHandback', input: { message: 'The report.' } }]), 'The report.');
+  assert.equal(reportOf([{ type: 'text', text: 'Plain words.' }]), 'Plain words.');
+  assert.equal(reportOf([{ type: 'tool_use', name: 'Bash', input: { command: 'ls' } }]), null);
+});

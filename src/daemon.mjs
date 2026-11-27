@@ -57,7 +57,16 @@ export function agentReport(text) {
   return out.join('\n').trim() || null;
 }
 
-// The last thing a subagent said, from its own transcript (the output_file of its notification).
+// A subagent's report: the message of its SubagentHandback tool call (how a member in the
+// background hands its report over), or else its last words.
+export function reportOf(content) {
+  const blocks = content ?? [];
+  const handback = blocks.find((c) => c.type === 'tool_use' && c.name === 'SubagentHandback' && typeof c.input?.message === 'string');
+  if (handback) return handback.input.message.trim() || null;
+  return blocks.filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim() || null;
+}
+
+// The report in a subagent's own transcript (the output_file of its notification).
 export function lastAssistantText(file) {
   let lines;
   try {
@@ -69,7 +78,7 @@ export function lastAssistantText(file) {
     try {
       const e = JSON.parse(lines[i]);
       if (e.type !== 'assistant') continue;
-      const text = (e.message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
+      const text = reportOf(e.message?.content);
       if (text) return text;
     } catch { /* a partly written line */ }
   }
@@ -1116,8 +1125,10 @@ export class Beckon {
       return;
     }
     if (e.type === 'assistant' && e.parent_tool_use_id && run.subs.has(e.parent_tool_use_id)) {
-      const text = (e.message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
-      if (text) run.subs.get(e.parent_tool_use_id).text = text;
+      const sub = run.subs.get(e.parent_tool_use_id);
+      const text = reportOf(e.message?.content);
+      if (text) sub.text = text;
+      if (text && (e.message?.content ?? []).some((c) => c.name === 'SubagentHandback')) sub.final = true;
       return;
     }
     // Reports handed back to the lead: as the Agent tool's result (a member in the foreground), or

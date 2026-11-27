@@ -113,7 +113,7 @@ if (run || perm) {
     emit({ type: 'assistant', parent_tool_use_id: 'tu-dev', message: { content: [{ type: 'text', text: 'Working on it' }] } });
     // dev: its last words are only in its own transcript, the notification's output_file
     const devLog = `${process.env.TMPDIR || '/tmp'}/fake-dev-${process.pid}.jsonl`;
-    appendFileSync(devLog, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Built the page in PR #7.\nAsk @qa to check it.' }] } }) + '\n' + '{"type":"user"');
+    appendFileSync(devLog, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Let me check the routes.' }] } }) + '\n' + JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'SubagentHandback', input: { message: 'Built the page in PR #7.\nAsk @qa to check it.' } }] } }) + '\n' + '{"type":"user"');
     emit({ type: 'system', subtype: 'task_notification', tool_use_id: 'tu-dev', status: 'completed', output_file: devLog });
     // designer, in the background: its report comes as a message from its session
     emit({ type: 'system', subtype: 'task_started', tool_use_id: 'tu-ui', task_id: 'task-ui', subagent_type: 'designer', description: 'Review the page', is_backgrounded: true });
