@@ -16,7 +16,8 @@ export function hookSettings({ nodePath, hookScript, timeoutSeconds }) {
 }
 
 export function claudeArgs({ sessionId, resume, model, permissionMode, settings, appendPrompt, name, mcpConfig, agent, pluginDirs = [] }) {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+  // Input as stream-json too: messages written to stdin while the run works reach it mid-turn.
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json'];
   if (resume) args.push('--resume', sessionId);
   else {
     args.push('--session-id', sessionId);
@@ -47,9 +48,15 @@ export function childEnv(base, extra, { allowApiKey = false } = {}) {
   return env;
 }
 
+// One stream-json input line: a user message.
+export const userMessage = (text) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n';
+
 // Run one turn of claude and resolve with its final result. Events are passed to onEvent as
 // they arrive. Aborting the signal stops the process (SIGTERM, then SIGKILL after 5 seconds).
-export function runClaude({ bin = 'claude', args, cwd, env, prompt, onEvent = () => {}, signal, spawnImpl = spawn }) {
+// onInput gets send(text): it hands a message to the running turn (Claude Code reads it at its
+// next step) and returns false once the run takes no more input. Input closes at a result
+// with no background task left, so the run then ends as with a plain -p prompt.
+export function runClaude({ bin = 'claude', args, cwd, env, prompt, onEvent = () => {}, onInput = () => {}, signal, spawnImpl = spawn, idleCloseMs = 60_000 }) {
   return new Promise((resolve) => {
     const started = Date.now();
     // Own process group: a service manager stopping beckon signals beckon's group, and the
@@ -69,10 +76,23 @@ export function runClaude({ bin = 'claude', args, cwd, env, prompt, onEvent = ()
     let apiKeySource = null;
     let killTimer = null;
     let settled = false;
+    let open = true;
+    let background = 0;
+    let sawResult = false;
+    let idleTimer = null;
+
+    const closeInput = () => {
+      clearTimeout(idleTimer);
+      if (!open) return;
+      open = false;
+      try { child.stdin.end(); } catch { /* already gone */ }
+    };
 
     const finish = (extra) => {
       if (settled) return;
       settled = true;
+      open = false;
+      clearTimeout(idleTimer);
       clearTimeout(killTimer);
       signal?.removeEventListener('abort', onAbort);
       resolve({
@@ -114,6 +134,22 @@ export function runClaude({ bin = 'claude', args, cwd, env, prompt, onEvent = ()
       // With subagents in the background a run ends with several results, the last ones often
       // empty: keep the last one that says something.
       if (event.type === 'result' && (event.result || !result?.result)) result = event;
+      if (event.type === 'assistant') clearTimeout(idleTimer);
+      if (event.type === 'result') {
+        sawResult = true;
+        // Done unless subagents still work in the background: their reports start turns of their own.
+        if (!background) closeInput();
+      }
+      if (event.type === 'system' && event.subtype === 'background_tasks_changed') {
+        background = event.tasks?.length ?? 0;
+        // The last background task ended after a result: its report normally starts a turn,
+        // which ends with a result that closes the input, but never wait for input forever.
+        if (!background && sawResult && open) {
+          clearTimeout(idleTimer);
+          idleTimer = setTimeout(closeInput, idleCloseMs);
+          idleTimer.unref?.();
+        }
+      }
       try {
         onEvent(event);
       } catch {
@@ -139,7 +175,16 @@ export function runClaude({ bin = 'claude', args, cwd, env, prompt, onEvent = ()
       if (buffer) handleLine(buffer);
       finish({ exitCode: code });
     });
-    child.stdin.on('error', () => {});
-    child.stdin.end(prompt);
+    child.stdin.on('error', () => { open = false; });
+    child.stdin.write(userMessage(prompt));
+    onInput((text) => {
+      if (!open || settled) return false;
+      try {
+        child.stdin.write(userMessage(text));
+        return true;
+      } catch {
+        return false;
+      }
+    });
   });
 }

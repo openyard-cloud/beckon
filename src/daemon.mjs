@@ -423,18 +423,21 @@ export class Beckon {
       known.queue = [];
       known.leadRun = false;
       let rest = text;
+      let switched = false;
       const appAgent = tagApp && this.agentOnApp(known.project, tagApp);
       const named = appAgent ? { agent: appAgent, rest: text } : this.agentPrefix(known.project, text);
       if (named) {
         rest = named.rest;
         if (known.agent !== named.agent) {
+          switched = true;
           known.agent = named.agent;
           this.state.save();
         }
         if (!rest) return this.post(ev.channel, ev.thread_ts, `This thread now goes to *${named.agent}*. Send the task.`);
       }
       await this.react(ev.channel, ev.ts, 'eyes', this.agentOf(known, this.config.projects[known.project]));
-      return this.enqueue(key, { text: rest, user: ev.user, ts: ev.ts });
+      // A message for the agent at work goes into its run; one for another agent waits its turn.
+      return this.enqueue(key, { text: rest, user: ev.user, ts: ev.ts, live: !switched });
     }
 
     const replyTs = ev.thread_ts ?? ev.ts;
@@ -853,6 +856,13 @@ export class Beckon {
   }
 
   enqueue(key, msg) {
+    // A person's message while the thread's run works reaches that run at its next step.
+    const run = this.running.get(key);
+    if (run && msg.live && run.send?.(`New message from <@${msg.user}> in the Slack thread, sent while you were working:\n\n${msg.text}`)) {
+      run.heard = true;
+      const t = this.state.threads[key];
+      return msg.ts && this.react(t.channel, msg.ts, 'speech_balloon', this.agentOf(t, this.config.projects[t.project]));
+    }
     const list = this.pending.get(key) ?? [];
     list.push(msg);
     this.pending.set(key, list);
@@ -885,7 +895,7 @@ export class Beckon {
     const lines = [
       `You are working through beckon: this request came from Slack${user === 'watch' ? ', from an alert in a channel beckon watches' : String(user).startsWith('agent:') ? `, from the project's ${user.slice(6)} agent, which handed this thread to you; its message is above in the conversation` : user && user !== 'schedule' ? `, from <@${user}>` : ' on a schedule'}, and your final message is posted back to the Slack thread as markdown.`,
       '- Start the final message with one sentence that sums up what you did or found, on its own line. Then add details only if they help: links to what you opened (pull requests, deploys) and anything that needs a decision. Keep it short.',
-      '- Nobody can answer questions during a run. If you need a decision, end the turn and ask; the answer arrives as the next message.',
+      '- Nobody answers questions during a run, so if you need a decision, end the turn and ask; the answer arrives as the next message. People can still add messages to the thread while you work: they reach you as new user messages, and you take them into account right away (a person saying to stop, wrap up or change course comes first).',
       `- You are in a git worktree of the "${project.name}" repository (${project.path})${ref ? `, started from ${ref} on a detached HEAD` : ''}. Create a branch before committing, following the repository's own conventions.`,
       '- Do the work yourself, all the way. Never hand the user a command to run, a button to click or a step to do by hand, not even as an alternative or a fallback: run it. This includes builds, releases, deploys, migrations and pushes, even where the repository notes say the owner usually does them by hand.',
       '- Close every browser tab or window you opened as soon as you are done with it, and always before your final message, also when the task failed. Prefer ways that open nothing: curl, gh and other CLIs, or headless Playwright, to read pages; Claude in Chrome tabs (closed with tabs_close) when those tools are available. Avoid `open <url>`; if you used it, close that tab afterwards (on macOS, with osascript, matching the exact URL you opened). Close headed browsers you launched. Never close tabs you did not open.',
@@ -1054,7 +1064,20 @@ export class Beckon {
       env,
       prompt,
       signal: run.abort.signal,
+      onInput: (send) => { run.send = send; },
       onEvent: (e) => {
+        // An answer to a message sent during the run, while subagents still work: post it now,
+        // unless the run ends in the next seconds and posts it as its reply anyway.
+        if (e.type === 'result' && e.result && run.heard) {
+          run.heard = false;
+          const answer = this.linkAgents(e.result.trim(), project);
+          setTimeout(() => {
+            if (this.running.get(key) !== run || run.status !== 'working') return;
+            for (const piece of chunkMarkdown(answer)) {
+              this.post(t.channel, t.threadTs, oneLine(piece, 300), [{ type: 'markdown', text: piece }], agent).catch(() => {});
+            }
+          }, this.answerDelayMs ?? 5000).unref?.();
+        }
         run.tabs?.push(e);
         if (run.progress.push(e)) this.refresh(key);
         this.trackSubagent(key, run, project, e).catch((err) => this.log(`Subagent message in ${key} failed: ${err.message}`));

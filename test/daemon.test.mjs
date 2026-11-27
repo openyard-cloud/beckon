@@ -338,6 +338,42 @@ test('starts a fresh session when the old one cannot be found', async () => {
   await close();
 });
 
+test('a message during a run reaches that run instead of waiting for the next turn', async () => {
+  const { beckon, slack, claudeRuns, done, close } = await setup();
+  try {
+    const m = mention('LIVE');
+    await beckon.handleEvent(m);
+    await waitFor(() => [...beckon.running.values()][0]?.send);
+    const reply = msg({ text: 'wrap up now', thread_ts: m.ts });
+    await beckon.handleEvent(reply);
+    await done();
+    assert.ok(slack.texts().some((t) => /^heard: New message from <@U1> .*\n\nwrap up now$/s.test(t ?? '')), slack.texts().join(' | '));
+    assert.ok(slack.find('reactions.add').some((c) => c.body.timestamp === reply.ts && c.body.name === 'speech_balloon'));
+    assert.equal(claudeRuns().length, 1, 'no second turn for the message');
+  } finally {
+    await close();
+  }
+});
+
+test('an answer given while subagents still work is posted before the run ends', async () => {
+  const { beckon, slack, done, close } = await setup();
+  try {
+    beckon.answerDelayMs = 50;
+    const m = mention('BACKGROUND');
+    await beckon.handleEvent(m);
+    await waitFor(() => [...beckon.running.values()][0]?.send);
+    await new Promise((r) => setTimeout(r, 200));
+    await beckon.handleEvent(msg({ text: 'how is it going?', thread_ts: m.ts }));
+    await done();
+    const texts = slack.texts();
+    const answer = texts.findIndex((t) => /^later: New message from <@U1>/.test(t ?? ''));
+    assert.ok(answer >= 0, texts.join(' | '));
+    assert.ok(texts.indexOf('all done') > answer, 'the final reply comes after the answer');
+  } finally {
+    await close();
+  }
+});
+
 test('a restart lets running work finish and turns new work away', async () => {
   const { beckon, slack, claudeRuns, close } = await setup();
   await beckon.handleEvent(mention('SLOW'));

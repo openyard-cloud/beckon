@@ -3,6 +3,8 @@
 // hooks it was given with --settings, so the approval path is exercised end to end.
 //   RUN:<command>   try a Bash command through the PreToolUse hook
 //   PERM:<command>  try a Bash command that needs permission (PermissionRequest hook)
+//   BACKGROUND      end a turn with a background task running, then answer the next input
+//   LIVE            wait up to 3 seconds for a message on the input, then say what it heard
 //   SLOW            finish after 0.7 seconds
 //   SLEEP           wait until killed
 //   TABS            open a browser tab, then close it only when the Stop hook asks
@@ -14,6 +16,7 @@
 //   anything else   reply "echo: <prompt>"
 import { execSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 
 const argv = process.argv.slice(2);
 const opt = (name) => {
@@ -26,8 +29,17 @@ if (process.env.FAKE_CLAUDE_LOG) {
   appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ argv, cwd: process.cwd(), apiKey: process.env.ANTHROPIC_API_KEY ?? null }) + '\n');
 }
 
-let prompt = '';
-for await (const c of process.stdin) prompt += c;
+// Input is stream-json: one user message per line, later ones while the run works.
+const lines = createInterface({ input: process.stdin })[Symbol.asyncIterator]();
+const textOf = (line) => {
+  try {
+    return JSON.parse(line).message.content.map((c) => c.text ?? '').join('');
+  } catch {
+    return line;
+  }
+};
+const firstLine = await lines.next();
+const prompt = firstLine.done ? '' : textOf(firstLine.value);
 const emit = (e) => process.stdout.write(JSON.stringify({ ...e, session_id: sessionId }) + '\n');
 
 if (process.env.FAKE_CLAUDE_MISSING_SESSION && opt('--resume')) {
@@ -94,6 +106,19 @@ if (run || perm) {
     tool(`c${i}`, 'mcp__claude-in-chrome__tabs_close_mcp', { tabId: 111 }, 'Closed tab 111. Group is now empty (auto-removed).');
   }
   emit({ type: 'result', subtype: 'success', is_error: false, result: `reminded ${reminders.length}: ${reminders.join(' | ')}`, num_turns: 2 });
+} else if (prompt.includes('BACKGROUND')) {
+  // ends a turn while a subagent still works, takes a message, then ends for good
+  emit({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'b1' }] });
+  emit({ type: 'result', subtype: 'success', is_error: false, result: 'started', num_turns: 1 });
+  const next = await lines.next();
+  emit({ type: 'result', subtype: 'success', is_error: false, result: next.done ? 'input closed early' : `later: ${textOf(next.value)}`, num_turns: 1 });
+  await new Promise((r) => setTimeout(r, 400));
+  emit({ type: 'system', subtype: 'background_tasks_changed', tasks: [] });
+  emit({ type: 'result', subtype: 'success', is_error: false, result: 'all done', num_turns: 1 });
+} else if (prompt.includes('LIVE')) {
+  emit({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'sleep 1' } }] } });
+  const next = await Promise.race([lines.next(), new Promise((r) => setTimeout(() => r({ done: true }), 3000))]);
+  emit({ type: 'result', subtype: 'success', is_error: false, result: next.done ? 'heard nothing' : `heard: ${textOf(next.value)}`, num_turns: 2 });
 } else if (prompt.includes('SLOW')) {
   emit({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'sleep 1' } }] } });
   await new Promise((r) => setTimeout(r, 700));
