@@ -1,85 +1,230 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>beckon</title>
 <style>
-:root{--bg:#f6f7f9;--card:#fff;--ink:#1d232a;--mute:#66707c;--line:#e3e6ea;--accent:#2f6fde;--ok:#1f9d55;--warn:#c98a04;--bad:#d64545;--bar:#2f6fde;--bar2:#9db8ec;--code:#f0f2f5;color-scheme:light}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111418;--card:#1a1f25;--ink:#e6e9ed;--mute:#98a2ae;--line:#2a3038;--accent:#6b9cf0;--ok:#3cc47c;--warn:#e0a826;--bad:#ef6b6b;--bar:#6b9cf0;--bar2:#34507f;--code:#14181d;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#111418;--card:#1a1f25;--ink:#e6e9ed;--mute:#98a2ae;--line:#2a3038;--accent:#6b9cf0;--ok:#3cc47c;--warn:#e0a826;--bad:#ef6b6b;--bar:#6b9cf0;--bar2:#34507f;--code:#14181d;color-scheme:dark}
+:root{
+  --side:#e8e8ea;--side-line:rgba(0,0,0,.09);--sel:rgba(0,0,0,.085);
+  --bg:#f5f5f7;--box:#fff;--box-line:rgba(0,0,0,.08);--line:rgba(0,0,0,.08);
+  --ink:#1d1d1f;--mute:#6e6e73;--faint:#a1a1a6;
+  --accent:#007aff;--accent-soft:rgba(0,122,255,.12);--ok:#28a745;--warn:#c27c00;--bad:#e5342a;
+  --field:#fff;--field-line:rgba(0,0,0,.14);--btn:#fff;--btn-line:rgba(0,0,0,.12);--seg-on:#fff;
+  --bar:#007aff;--shadow:0 .5px 1.5px rgba(0,0,0,.12);
+  color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --side:#252527;--side-line:rgba(255,255,255,.08);--sel:rgba(255,255,255,.1);
+  --bg:#1c1c1e;--box:#2a2a2c;--box-line:rgba(255,255,255,.07);--line:rgba(255,255,255,.08);
+  --ink:#f2f2f7;--mute:#98989f;--faint:#636366;
+  --accent:#0a84ff;--accent-soft:rgba(10,132,255,.2);--ok:#32d74b;--warn:#ffb340;--bad:#ff5a50;
+  --field:rgba(255,255,255,.06);--field-line:rgba(255,255,255,.12);--btn:rgba(255,255,255,.12);--btn-line:rgba(255,255,255,.06);--seg-on:#636366;
+  --bar:#0a84ff;--shadow:0 .5px 1px rgba(0,0,0,.4);
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --side:#252527;--side-line:rgba(255,255,255,.08);--sel:rgba(255,255,255,.1);
+  --bg:#1c1c1e;--box:#2a2a2c;--box-line:rgba(255,255,255,.07);--line:rgba(255,255,255,.08);
+  --ink:#f2f2f7;--mute:#98989f;--faint:#636366;
+  --accent:#0a84ff;--accent-soft:rgba(10,132,255,.2);--ok:#32d74b;--warn:#ffb340;--bad:#ff5a50;
+  --field:rgba(255,255,255,.06);--field-line:rgba(255,255,255,.12);--btn:rgba(255,255,255,.12);--btn-line:rgba(255,255,255,.06);--seg-on:#636366;
+  --bar:#0a84ff;--shadow:0 .5px 1px rgba(0,0,0,.4);
+  color-scheme:dark}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:16px;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
-header b{font-size:16px}
-nav{display:flex;gap:4px;flex-wrap:wrap}
-nav button{border:0;background:none;color:var(--mute);padding:6px 10px;border-radius:6px;cursor:pointer;font:inherit}
-nav button.on{background:var(--code);color:var(--ink);font-weight:600}
-main{max-width:1100px;margin:0 auto;padding:16px}
-h2{font-size:15px;margin:24px 0 10px}
-h2:first-child{margin-top:0}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
-.k{color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
-.v{font-size:20px;font-weight:600;margin-top:4px;font-variant-numeric:tabular-nums}
-.s{color:var(--mute);font-size:12px;margin-top:4px;word-break:break-word}
-.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle;background:var(--mute)}
-.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
-pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;max-height:420px;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;margin:0}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-size:12px;color:var(--mute);font-weight:600}
-td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-tr:last-child td{border-bottom:0}
-.wrap{overflow-x:auto}
-button.b{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:6px 12px;border-radius:6px;cursor:pointer;font:inherit}
-button.b:hover{border-color:var(--accent)}
-button.p{background:var(--accent);border-color:var(--accent);color:#fff}
-button.d{color:var(--bad)}
-button:disabled{opacity:.5;cursor:default}
-label{display:block;font-size:12px;color:var(--mute);margin:8px 0 2px}
-input,select,textarea{width:100%;font:13px ui-monospace,Menlo,monospace;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
-textarea{min-height:64px;resize:vertical}
-input.err,textarea.err{border-color:var(--bad)}
-.row{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:0 12px}
-.full{grid-column:1/-1}
-.agents{border-top:1px solid var(--line);margin-top:12px;padding-top:10px}
-.agents h4{margin:0 0 6px}
-.agent{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0}
-.warn{color:var(--warn)}
-.head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.head h3{margin:0;font-size:15px}
-.stack>*+*{margin-top:12px}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden;-webkit-user-select:none;user-select:none;cursor:default}
+input,textarea,select,pre,.sel{-webkit-user-select:text;user-select:text}
 [hidden]{display:none!important}
-.savebar{position:sticky;bottom:0;margin-top:16px;padding:10px 14px;background:var(--card);border:1px solid var(--accent);border-radius:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.errs{color:var(--bad);margin:6px 0 0;padding-left:18px}
-.bars{display:flex;align-items:flex-end;gap:3px;height:160px;padding:8px;background:var(--card);border:1px solid var(--line);border-radius:10px}
-.bars div{flex:1;min-width:3px;display:flex;flex-direction:column;justify-content:flex-end;height:100%}
-.bars i{display:block;background:var(--bar);border-radius:2px 2px 0 0}
-.bars i.r{background:var(--bar2);border-radius:0}
-.axis{display:flex;justify-content:space-between;color:var(--mute);font-size:11px;margin-top:4px}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
-.seg button{border:0;background:var(--card);color:var(--mute);padding:5px 10px;cursor:pointer;font:inherit}
-.seg button.on{background:var(--accent);color:#fff}
+svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.mono,pre,code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px}
+
+/* window: sidebar + main */
+#app{display:grid;grid-template-columns:216px minmax(0,1fr);height:100vh}
+#side{background:var(--side);border-right:1px solid var(--side-line);display:flex;flex-direction:column;min-height:0;overflow:auto;padding:0 10px 12px}
+#side .top{height:52px;flex:none}
+.web #side .top{height:14px}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 8px 10px}
+.logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#f8c15a,#ef9f2c);display:grid;place-items:center;box-shadow:var(--shadow);flex:none}
+.logo svg{width:20px;height:20px;margin:2px 0 0 1px}
+.brand b{font-size:13px;display:block}
+.brand small{color:var(--mute);font-size:11px;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.sec{display:flex;align-items:center;justify-content:space-between;color:var(--mute);font-size:11px;font-weight:600;padding:14px 8px 4px}
+.sec button{border:0;background:none;color:var(--mute);padding:2px;border-radius:5px;display:grid;place-items:center;cursor:default}
+.sec button:hover{background:var(--sel);color:var(--ink)}
+.item{display:flex;align-items:center;gap:8px;width:100%;border:0;background:none;color:var(--ink);font:inherit;text-align:left;padding:5px 8px;border-radius:6px;cursor:default;margin:1px 0}
+.item svg.i{color:var(--accent)}
+.item span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item.on{background:var(--sel);font-weight:500}
+.item:not(.on):hover{background:rgba(127,127,127,.08)}
+.count{font-size:11px;color:var(--mute);font-variant-numeric:tabular-nums;flex:none!important}
+.count.live{color:#fff;background:var(--ok);border-radius:8px;padding:0 6px;font-weight:600;line-height:16px}
+
+#main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+#bar{height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;border-bottom:1px solid var(--line);background:var(--bg)}
+#bar h1{font-size:15px;font-weight:600;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#bar .sub{color:var(--mute);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px}
+#bar .t{min-width:0;display:flex;flex-direction:column}
+#bar .tools{margin-left:auto;display:flex;gap:8px;align-items:center;flex:none}
+#view{flex:1;overflow:auto;padding:20px 24px 80px}
+.page{max-width:980px;margin:0 auto}
+
+/* controls */
+.btn{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 10px;border-radius:6px;border:.5px solid var(--btn-line);background:var(--btn);color:var(--ink);font:inherit;box-shadow:var(--shadow);cursor:default;white-space:nowrap}
+.btn:active{filter:brightness(.94)}
+.btn.p{background:var(--accent);border-color:transparent;color:#fff}
+.btn.d{color:var(--bad)}
+.btn.dd{background:var(--bad);border-color:transparent;color:#fff}
+.btn.icon{padding:0 6px}
+.btn:disabled{opacity:.45}
+.link{border:0;background:none;color:var(--accent);font:inherit;padding:0;cursor:pointer}
+.seg{display:inline-flex;background:rgba(127,127,127,.16);border-radius:7px;padding:2px;gap:2px}
+.seg button{border:0;background:none;color:var(--ink);font:inherit;padding:2px 11px;border-radius:5px;cursor:default;white-space:nowrap}
+.seg button.on{background:var(--seg-on);box-shadow:0 .5px 2px rgba(0,0,0,.2);font-weight:500}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--field);border:.5px solid var(--field-line);border-radius:6px;padding:3px 7px;min-height:24px;width:100%;outline:none;box-shadow:inset 0 .5px 1px rgba(0,0,0,.04)}
+input.mono,textarea.mono{font-size:12px}
+input[type=checkbox]{width:auto;min-height:0;box-shadow:none;accent-color:var(--accent);margin:0}
+textarea{resize:vertical;min-height:60px;line-height:1.45}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px var(--accent-soft);border-color:var(--accent)}
+input.err,textarea.err{border-color:var(--bad);box-shadow:0 0 0 3px rgba(229,52,42,.15)}
+input::placeholder,textarea::placeholder{color:var(--faint)}
+.search{position:relative;width:200px}
+.search svg{position:absolute;left:7px;top:4px;color:var(--mute)}
+.search input{padding-left:26px;border-radius:7px}
+
+/* content blocks */
+h2{font-size:13px;font-weight:600;margin:24px 0 8px;display:flex;align-items:center;gap:8px}
+h2:first-child{margin-top:0}
+h2 .link,h2 .btn{margin-left:auto;font-weight:400}
+.box{background:var(--box);border:.5px solid var(--box-line);border-radius:10px;box-shadow:var(--shadow)}
 .muted{color:var(--mute)}
-#toast{position:fixed;right:16px;bottom:16px;max-width:360px;padding:10px 14px;border-radius:8px;background:var(--ink);color:var(--bg);opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
-#toast.on{opacity:.95}
-.legend{display:flex;gap:14px;color:var(--mute);font-size:12px;margin-top:6px}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-@media (max-width:600px){main{padding:12px 16px}.v{font-size:18px}}
+.small{font-size:11px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
+.dot.pulse{animation:pulse 2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(40,167,69,.45)}70%{box-shadow:0 0 0 6px rgba(40,167,69,0)}100%{box-shadow:0 0 0 0 rgba(40,167,69,0)}}
+.pill{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.02em;padding:0 6px;border-radius:5px;line-height:16px;background:rgba(127,127,127,.16);color:var(--mute);vertical-align:1px}
+.pill.a{background:var(--accent-soft);color:var(--accent)}
+
+/* health strip */
+.strip{display:flex;flex-wrap:wrap}
+.strip>div{flex:1 1 130px;padding:11px 14px;border-left:.5px solid var(--line);min-width:0}
+.strip>div:first-child{border-left:0}
+.strip .k{color:var(--mute);font-size:11px}
+.strip .v{font-size:15px;font-weight:600;display:flex;align-items:center;gap:6px;margin-top:2px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.strip .s{color:var(--mute);font-size:11px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* lists (rows inside a box) */
+.list>.r{display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:.5px solid var(--line);min-height:44px}
+.list>.r:first-child{border-top:0}
+.list>.r.click:hover{background:rgba(127,127,127,.06)}
+.list>.r.click:first-child:hover{border-radius:10px 10px 0 0}
+.list>.r.click:last-child:hover{border-radius:0 0 10px 10px}
+.list .main{flex:1;min-width:0}
+.list .main>div:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list .meta{color:var(--mute);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list .n{color:var(--mute);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right;min-width:64px}
+.list .n b{color:var(--ink);font-weight:500}
+.list .head{color:var(--mute);font-size:11px;min-height:30px;padding-top:6px;padding-bottom:6px}
+.empty{padding:22px 12px;text-align:center;color:var(--mute)}
+
+/* agent avatars and cards */
+.av{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;font-weight:700;font-size:11px;letter-spacing:.02em;flex:none;position:relative;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.12)}
+.av.l{width:40px;height:40px;border-radius:10px;font-size:13px}
+.av.s{width:24px;height:24px;border-radius:6px;font-size:9px}
+.av.g{background:rgba(127,127,127,.15);color:var(--mute);box-shadow:none}
+.av.f{background:var(--accent-soft);color:var(--accent);box-shadow:none}
+.av .st{position:absolute;right:-3px;bottom:-3px;width:11px;height:11px;border-radius:50%;border:2px solid var(--box);background:var(--faint)}
+.av .st.ok{background:var(--ok)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.card{padding:14px;display:flex;flex-direction:column;gap:8px;text-align:left;font:inherit;color:inherit;cursor:default;min-width:0}
+button.card:hover{border-color:var(--accent)}
+.card .who{display:flex;gap:10px;align-items:center;min-width:0}
+.card .who b{font-size:13px}
+.card .who>div{min-width:0}
+.card .desc{color:var(--mute);min-height:36px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.card .foot{display:flex;align-items:center;gap:6px;color:var(--mute);font-size:11px;margin-top:auto;padding-top:8px;border-top:.5px solid var(--line);min-width:0}
+.card .foot .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card.add{align-items:center;justify-content:center;color:var(--accent);border:1px dashed var(--field-line);background:none;box-shadow:none;min-height:120px;flex-direction:row;border-radius:10px}
+.card.add:hover{background:var(--accent-soft)}
+.team{display:flex;gap:6px;flex-wrap:wrap}
+.warn{color:var(--warn)}
+
+/* settings groups (label left, control right) */
+.group{margin-bottom:20px}
+.group>.gt{font-size:13px;font-weight:600;margin:0 0 6px 2px;display:flex;align-items:center;gap:8px;min-height:24px}
+.group>.gt .btn{margin-left:auto}
+.srow{display:grid;grid-template-columns:minmax(150px,38%) minmax(0,1fr);gap:12px;align-items:center;padding:8px 12px;border-top:.5px solid var(--line);min-height:42px}
+.srow:first-child{border-top:0}
+.srow>label{font-size:13px}
+.srow>label small{display:block;color:var(--mute);font-size:11px;margin-top:1px}
+.srow.stack{grid-template-columns:minmax(0,1fr);gap:6px}
+.srow .ctl{display:flex;align-items:center;gap:8px;min-width:0;justify-content:flex-end}
+.srow .ctl select{width:auto;min-width:160px;max-width:100%}
+.srow .ctl input[type=checkbox]{transform:scale(1.15)}
+.danger{display:flex;justify-content:flex-end;margin-top:4px}
+
+/* usage chart */
+.chart{padding:14px 14px 8px}
+.bars{display:flex;align-items:flex-end;gap:3px;height:150px;border-bottom:.5px solid var(--line)}
+.bars>div{flex:1;min-width:2px;height:100%;display:flex;align-items:flex-end}
+.bars i{display:block;width:100%;background:var(--bar);border-radius:3px 3px 0 0;min-height:1px;opacity:.85}
+.bars>div:hover i{opacity:1}
+.axis{display:flex;justify-content:space-between;color:var(--mute);font-size:11px;margin-top:5px}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:7px 12px;border-top:.5px solid var(--line);white-space:nowrap}
+tr:first-child th{border-top:0}
+th{color:var(--mute);font-weight:400;font-size:11px}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+td.t{white-space:normal;min-width:200px}
+
+pre.log{margin:0;padding:12px 14px;white-space:pre-wrap;word-break:break-word;line-height:1.55;background:var(--box);border-radius:10px;border:.5px solid var(--box-line);min-height:300px}
+.errs{color:var(--bad);margin:4px 0 0;padding-left:18px}
+
+/* save bar and sheets */
+#savebar{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;display:flex;align-items:center;gap:8px;padding:7px 8px 7px 14px;background:var(--box);border:.5px solid var(--box-line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.08);max-width:calc(100% - 32px);z-index:6}
+#savebar .msg{display:flex;align-items:center;gap:6px;white-space:nowrap}
+#savebar .errs{max-height:120px;overflow:auto;padding-left:0}
+#savebar .errs:empty{display:none}
+#veil{position:fixed;inset:0;background:rgba(0,0,0,.18);display:flex;align-items:flex-start;justify-content:center;z-index:9}
+.sheet{margin-top:64px;width:min(420px,calc(100% - 32px));background:var(--box);border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.3),0 0 0 .5px rgba(0,0,0,.15);padding:18px}
+.sheet h3{margin:0 0 6px;font-size:13px}
+.sheet p{margin:0 0 6px;color:var(--mute)}
+.sheet label{display:block;font-size:12px;color:var(--mute);margin:10px 0 4px}
+.sheet .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+#toast{position:fixed;left:50%;bottom:16px;transform:translate(-50%,20px);max-width:420px;padding:8px 14px;border-radius:9px;background:rgba(40,40,42,.94);color:#fff;opacity:0;transition:.2s;pointer-events:none;z-index:10;font-size:12px}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+
+@media (max-width:720px){
+  #app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  #side{flex-direction:row;align-items:center;overflow-x:auto;padding:6px 8px;border-right:0;border-bottom:1px solid var(--side-line);gap:2px}
+  #side .top,.sec,.brand small{display:none}
+  .brand{padding:0 6px 0 0}
+  .item{width:auto;flex:none}
+  #bar{height:auto;min-height:52px;flex-wrap:wrap;padding:8px 16px}
+  #bar .tools{margin-left:0;flex-wrap:wrap}
+  #view{padding:16px 16px 80px}
+  .srow{grid-template-columns:minmax(0,1fr);gap:6px}
+  .srow .ctl{justify-content:flex-start}
+  .list .n.opt{display:none}
+}
 </style>
 </head>
 <body>
-<header><b>beckon</b><nav id="tabs"></nav></header>
-<main id="view"></main>
+<div id="app">
+  <aside id="side"></aside>
+  <section id="main">
+    <header id="bar" class="drag"></header>
+    <div id="view"></div>
+    <div id="savebar" hidden></div>
+  </section>
+</div>
 <div id="toast"></div>
 <script>
 'use strict';
 // ---- access ----
 const m = location.hash.match(/t=([0-9a-f]+)/);
 if (m) { try { localStorage.setItem('beckonToken', m[1]); } catch {} history.replaceState(null, '', location.pathname); }
-let token = m ? m[1] : (() => { try { return localStorage.getItem('beckonToken') || ''; } catch { return ''; } })();
-
+const token = m ? m[1] : (() => { try { return localStorage.getItem('beckonToken') || ''; } catch { return ''; } })();
 async function api(path, body) {
   const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + token, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const data = await r.json().catch(() => ({ error: 'bad response' }));
@@ -87,7 +232,17 @@ async function api(path, body) {
   return data;
 }
 
-// ---- small helpers ----
+// ---- in the menu bar app's window: drag it by its top strip, double-click to zoom (a browser has no ipc) ----
+const native = !!(window.ipc && window.ipc.postMessage);
+if (!native) document.documentElement.classList.add('web');
+addEventListener('mousedown', (e) => {
+  if (!native || e.button !== 0 || e.target.closest('button,input,select,textarea,a,.sel')) return;
+  if (e.target.closest('.drag')) { e.preventDefault(); window.ipc.postMessage(e.detail === 2 ? 'zoom' : 'drag'); }
+});
+
+// ---- helpers ----
+// replaceChildren, but flattening lists and skipping null like h() does.
+const fill = (el, ...kids) => el.replaceChildren(...kids.flat(9).filter((c) => c != null && c !== false));
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -100,299 +255,502 @@ function h(tag, attrs, ...kids) {
   for (const c of kids.flat(9)) if (c != null && c !== false) el.append(c instanceof Node ? c : String(c));
   return el;
 }
+const ICONS = {
+  grid: '<rect x="2.5" y="2.5" width="4.6" height="4.6" rx="1.3"/><rect x="8.9" y="2.5" width="4.6" height="4.6" rx="1.3"/><rect x="2.5" y="8.9" width="4.6" height="4.6" rx="1.3"/><rect x="8.9" y="8.9" width="4.6" height="4.6" rx="1.3"/>',
+  folder: '<path d="M2 4.6C2 3.7 2.7 3 3.6 3h2.6l1.5 1.6h4.7c.9 0 1.6.7 1.6 1.6v5.2c0 .9-.7 1.6-1.6 1.6H3.6c-.9 0-1.6-.7-1.6-1.6z"/>',
+  chart: '<path d="M2.5 13.5h11"/><rect x="3.5" y="8.5" width="2.2" height="3.5" rx=".6"/><rect x="6.9" y="5.5" width="2.2" height="6.5" rx=".6"/><rect x="10.3" y="2.5" width="2.2" height="9.5" rx=".6"/>',
+  sliders: '<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/><circle cx="5.5" cy="4.5" r="1.5" fill="currentColor"/><circle cx="10.5" cy="8" r="1.5" fill="currentColor"/><circle cx="7" cy="11.5" r="1.5" fill="currentColor"/>',
+  doc: '<path d="M4.3 2h4.9l3 3v8.4c0 .4-.3.6-.6.6H4.3c-.4 0-.6-.2-.6-.6V2.6c0-.4.2-.6.6-.6z"/><path d="M9 2v3.2h3.2M5.8 8.2h4.4M5.8 10.7h4.4"/>',
+  plus: '<path d="M8 3.2v9.6M3.2 8h9.6"/>',
+  restart: '<path d="M13 8.2A5 5 0 1 1 11.4 4.4"/><path d="M11.9 1.9v2.9H9"/>',
+  back: '<path d="M10 3 5 8l5 5"/>',
+  chev: '<path d="m6.5 3.5 4.5 4.5-4.5 4.5"/>',
+  clock: '<circle cx="8" cy="8" r="5.6"/><path d="M8 4.8V8l2.2 1.4"/>',
+  bell: '<path d="M4.2 11V7.4a3.8 3.8 0 0 1 7.6 0V11l1 1.2H3.2z"/><path d="M6.8 13.6a1.3 1.3 0 0 0 2.4 0"/>',
+  chat: '<path d="M2.5 4.2c0-.9.7-1.6 1.6-1.6h7.8c.9 0 1.6.7 1.6 1.6v5.4c0 .9-.7 1.6-1.6 1.6H7.2l-2.8 2.2v-2.2h-.3c-.9 0-1.6-.7-1.6-1.6z"/>',
+  search: '<circle cx="7" cy="7" r="4.3"/><path d="m10.2 10.2 3.3 3.3"/>',
+  code: '<path d="m5.5 4.5-3.5 3.5 3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
+};
+function icon(n) { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 16 16'); s.setAttribute('class', 'i'); s.innerHTML = ICONS[n]; return s; }
+const LOGO = '<svg viewBox="100 80 320 400"><path d="M160 104 v266" stroke="#1c2530" stroke-width="58" stroke-linecap="round" fill="none"/><path d="M160 218 h140 a72 72 0 0 1 72 72 v40 a72 72 0 0 1 -72 72 h-90 l-62 34 v-34 z" fill="#1c2530"/><rect x="196" y="256" width="140" height="74" rx="37" fill="#f6efe0"/><circle cx="236" cy="293" r="15" fill="#1c2530"/><circle cx="296" cy="293" r="15" fill="#1c2530"/></svg>';
 const num = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
-const mb = (kb) => (kb / 1024).toFixed(kb < 10240 ? 1 : 0) + ' MB';
-const dur = (s) => s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm' : s < 86400 ? Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm' : Math.floor(s / 86400) + 'd ' + Math.floor(s % 86400 / 3600) + 'h';
-const ago = (ms) => ms ? dur(Math.max(0, Math.round((Date.now() - ms) / 1000))) + ' ago' : '';
+const mb = (kb) => kb >= 1048576 ? (kb / 1048576).toFixed(1) + ' GB' : (kb / 1024).toFixed(kb < 10240 ? 1 : 0) + ' MB';
+const short = (s) => s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm' : s < 86400 ? Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm' : Math.floor(s / 86400) + 'd ' + Math.floor(s % 86400 / 3600) + 'h';
+const ago = (ms) => ms ? short(Math.max(0, Math.round((Date.now() - ms) / 1000))) + ' trước' : '';
+const when = (ms) => { const d = new Date(ms); return !ms || isNaN(d) ? '' : d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }); };
 const total = (t) => t[0] + t[1] + t[2] + t[3];
 let toastTimer;
 function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 3500); }
-const view = document.getElementById('view');
-function show(...els) { view.replaceChildren(...els); }
 function fail(e) {
-  if (e.status === 401) show(h('div', { class: 'card' }, h('b', {}, 'Not signed in. '), 'Open the link printed by ', h('code', {}, 'beckon-ui url'), ' on the beckon machine.'));
+  if (e.status === 401) fill(view, h('div', { class: 'page' }, h('div', { class: 'box empty' }, h('b', {}, 'Chưa đăng nhập. '), 'Mở link do ', h('code', {}, 'beckon-ui url'), ' in ra trên máy chạy beckon.')));
   else toast(e.message);
 }
 
-// ---- tabs ----
-const TABS = { overview: 'Overview', projects: 'Projects', threads: 'Runs', usage: 'Usage', config: 'Config file' };
-let tab = (() => { try { return localStorage.getItem('beckonTab') || 'overview'; } catch { return 'overview'; } })();
-let timer = null, dirty = false;
-function nav() {
-  document.getElementById('tabs').replaceChildren(...Object.entries(TABS).map(([k, label]) => h('button', { class: k === tab ? 'on' : '', onclick: () => go(k) }, label)));
+// A sheet (a dialog inside the page): the app window's WebKit view has no confirm().
+function sheet({ title, text, body = [], ok = 'OK', danger = false, onOk }) {
+  return new Promise((resolve) => {
+    const err = h('div', { class: 'errs' });
+    const close = (v) => { veil.remove(); removeEventListener('keydown', key, true); resolve(v); };
+    const okBtn = h('button', { class: 'btn ' + (danger ? 'dd' : 'p') }, ok);
+    const accept = async () => {
+      if (!onOk) return close(true);
+      okBtn.disabled = true;
+      try { const r = await onOk(err); if (r !== false) return close(r ?? true); } catch (e) { err.replaceChildren(e.message); }
+      okBtn.disabled = false;
+    };
+    okBtn.addEventListener('click', accept);
+    const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(false); } else if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') { e.preventDefault(); accept(); } };
+    const veil = h('div', { id: 'veil', onmousedown: (e) => { if (e.target === veil) close(false); } },
+      h('div', { class: 'sheet' }, h('h3', {}, title), text ? h('p', {}, text) : null, body, err,
+        h('div', { class: 'acts' }, h('button', { class: 'btn', onclick: () => close(false) }, 'Huỷ'), okBtn)));
+    addEventListener('keydown', key, true);
+    document.body.append(veil);
+    (veil.querySelector('input') ?? okBtn).focus();
+  });
 }
-function go(k) {
-  if (dirty && !confirm('Discard unsaved changes?')) return;
-  dirty = false; tab = k; try { localStorage.setItem('beckonTab', k); } catch {}
-  clearInterval(timer); timer = null; nav();
-  ({ overview, projects, threads, usage, config })[k]().catch(fail);
+const ask = (title, text, ok, danger) => sheet({ title, text, ok, danger });
+
+// ---- agents look as in Slack: a colour and a short label per role ----
+const ROLES = [
+  [/design|\bui\b|ux/, 'UI', ['#d39bff', '#8e44c9'], '#fff'],
+  [/\bqa\b|test/, 'QA', ['#5fd39b', '#2a9563'], '#fff'],
+  [/\bpm\b|product|manager/, 'PM', ['#f8c15a', '#ef9f2c'], '#3a2500'],
+  [/dev|\bbe\b|\bfe\b|eng|backend|frontend|code/, 'DEV', ['#6aa8ff', '#2f6fd1'], '#fff'],
+];
+const OTHER = [[['#7fd3e6', '#2f8fa8'], '#fff'], [['#ff9bb0', '#d2476a'], '#fff'], [['#b8bcc4', '#6d737d'], '#fff']];
+function avatar(a, size = '', status) {
+  const s = `${a.name} ${a.agent ?? ''} ${a.app ?? ''}`.toLowerCase();
+  const r = ROLES.find(([re]) => re.test(s)) ?? (a.lead ? ROLES[2] : null);
+  const [g, ink] = r ? [r[2], r[3]] : OTHER[[...a.name].reduce((x, c) => x + c.charCodeAt(0), 0) % OTHER.length];
+  const app = a.app && a.app !== 'MAIN' && a.app.length <= 3 ? a.app : null;
+  const label = app ?? r?.[1] ?? a.name.slice(0, 2).toUpperCase();
+  return h('div', { class: 'av ' + size, style: `background:linear-gradient(135deg,${g[0]},${g[1]});color:${ink}`, title: a.name }, label,
+    status === undefined ? null : h('i', { class: 'st' + (status ? ' ok' : '') }));
 }
-addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
+
+// ---- state and navigation ----
+const view = document.getElementById('view');
+const bar = document.getElementById('bar');
+const side = document.getElementById('side');
+const savebar = document.getElementById('savebar');
+let page = (() => { try { return JSON.parse(localStorage.getItem('beckonPage')) || { v: 'overview' }; } catch { return { v: 'overview' }; } })();
+let ov = null, ovAt = 0, threadsList = null, threadsAt = 0, cfg = null, cfgText = '', cfgPath = '', version = null, dirty = false, saveSource = null, seq = 0;
+
+async function go(next) {
+  if (dirty && !(await ask('Bỏ các thay đổi chưa lưu?', 'Những gì vừa sửa sẽ mất.', 'Bỏ thay đổi', true))) return;
+  setDirty(false);
+  page = next;
+  try { localStorage.setItem('beckonPage', JSON.stringify(page)); } catch {}
+  view.scrollTop = 0;
+  render().catch(fail);
+}
+async function render() {
+  const my = ++seq;
+  saveSource = null;
+  if (page.v === 'project' && !ov?.projectList?.some((p) => p.name === page.p)) {
+    await refreshOv();
+    if (!ov.projectList.some((p) => p.name === page.p)) page = { v: 'overview' };
+  }
+  drawSide();
+  const r = { overview, project, usage, settings, log }[page.v] ?? overview;
+  if (my === seq) await r(my);
+}
+function header(title, sub, tools = [], back) {
+  fill(bar, 
+    back ? h('button', { class: 'btn icon', title: 'Quay lại', onclick: back }, icon('back')) : null,
+    h('div', { class: 't' }, h('h1', {}, title), sub ? h('div', { class: 'sub' }, sub) : null),
+    h('div', { class: 'tools' }, tools));
+}
+async function refreshOv() { ov = await api('/api/overview'); ovAt = Date.now(); drawSide(); return ov; }
+const freshOv = () => (ov && Date.now() - ovAt < 1500 ? ov : refreshOv());
+async function threads(force) {
+  if (force || !threadsList || Date.now() - threadsAt > 15000) { threadsList = (await api('/api/threads')).threads; threadsAt = Date.now(); }
+  return threadsList;
+}
+async function loadConfig() { const c = await api('/api/config'); version = c.version; cfgText = c.text; cfgPath = c.path; cfg = JSON.parse(c.text); cfg.projects ??= {}; cfg.schedules ??= []; cfg.watches ??= []; }
+// Unsaved edits stay; otherwise read the file again (Slack or a hand edit may have changed it).
+const ensureConfig = () => (dirty && cfg ? Promise.resolve() : loadConfig());
+
+// Live pages redraw every 5 s while the window is visible; forms do not.
+setInterval(async () => {
+  if (document.hidden) return;
+  try {
+    await refreshOv();
+    const live = page.v === 'overview' || page.v === 'log' || (page.v === 'project' && (page.s ?? 'agents') === 'agents' && !page.a);
+    if (live && !dirty && !document.getElementById('veil')) { const my = ++seq; await ({ overview, project, log })[page.v](my); }
+  } catch (e) { if (e.status === 401) fail(e); }
+}, 5000);
+
+function drawSide() {
+  const d = ov?.daemon;
+  const item = (icn, label, target, extra) => {
+    const on = target.v === page.v && (target.v !== 'project' || target.p === page.p);
+    return h('button', { class: 'item' + (on ? ' on' : ''), onclick: () => go(target) }, icon(icn), h('span', {}, label), extra);
+  };
+  fill(side, 
+    h('div', { class: 'top drag' }),
+    h('div', { class: 'brand drag' }, h('div', { class: 'logo' }), h('div', {}, h('b', {}, 'beckon'),
+      h('small', {}, h('span', { class: 'dot ' + (!ov ? '' : d ? 'ok' : 'bad') }), !ov ? '…' : d ? 'Đang chạy · ' + short(d.secs) : 'Đã dừng'))),
+    item('grid', 'Tổng quan', { v: 'overview' }),
+    h('div', { class: 'sec' }, 'Projects', h('button', { title: 'Thêm project', onclick: addProject }, icon('plus'))),
+    (ov?.projectList ?? []).map((p) => item('folder', p.name, { v: 'project', p: p.name },
+      p.running ? h('span', { class: 'count live', title: `${p.running} đang chạy` }, p.running) : null)),
+    h('div', { class: 'sec' }, 'beckon'),
+    item('chart', 'Usage', { v: 'usage' }),
+    item('sliders', 'Cài đặt', { v: 'settings' }),
+    item('doc', 'Log', { v: 'log' }),
+  );
+  side.querySelector('.logo').innerHTML = LOGO;
+}
 
 // ---- overview ----
 const STATE = { connected: 'ok', applied: 'ok', reconnecting: 'warn', unknown: '', off: '', down: 'bad', rejected: 'bad' };
-function stat(label, value, sub, cls) {
-  return h('div', { class: 'card' }, h('div', { class: 'k' }, label), h('div', { class: 'v' }, cls != null ? h('span', { class: 'dot ' + cls }) : null, value), sub ? h('div', { class: 's' }, sub) : null);
+const WORD = { connected: 'Đã kết nối', applied: 'Đã áp dụng', reconnecting: 'Đang nối lại', unknown: 'Chưa rõ', off: 'Tắt', down: 'Mất kết nối', rejected: 'Bị từ chối' };
+function cell(k, v, s, cls) { return h('div', {}, h('div', { class: 'k' }, k), h('div', { class: 'v' }, cls != null ? h('span', { class: 'dot ' + cls }) : null, v), s ? h('div', { class: 's', title: s }, s) : null); }
+const agentOf = (project, name) => ov.projectList.find((x) => x.name === project)?.agents.find((a) => a.name === name);
+function runRows(runs, withProject) {
+  if (!runs.length) return h('div', { class: 'box empty' }, 'Không có việc nào đang chạy.');
+  return h('div', { class: 'box list' }, runs.map((r) => {
+    const a = agentOf(r.project, r.agent);
+    return h('div', { class: 'r' + (withProject ? ' click' : ''), onclick: withProject ? () => go({ v: 'project', p: r.project }) : null },
+      a ? avatar(a, '', true) : h('div', { class: 'av g' }, icon('chat')),
+      h('div', { class: 'main' }, h('div', { title: r.title }, r.title), h('div', { class: 'meta' }, [withProject ? r.project : null, r.agent, 'pid ' + r.pid].filter(Boolean).join(' · '))),
+      h('div', { class: 'n', title: 'thời gian chạy' }, h('b', {}, short(r.secs))), h('div', { class: 'n opt', title: 'bộ nhớ' }, mb(r.rssKb)), h('div', { class: 'n opt', title: 'CPU' }, r.cpu.toFixed(1) + '%'));
+  }));
 }
-async function overview() {
-  const draw = async () => {
-    const o = await api('/api/overview');
-    if (tab !== 'overview') return;
-    const d = o.daemon;
-    const since = (x) => x.at ? 'since ' + new Date(x.at).toLocaleString() : '';
-    const restart = h('button', { class: 'b', disabled: !d, onclick: async (e) => {
-      if (!confirm('Restart beckon? Running tasks finish first.')) return;
-      e.target.disabled = true;
-      try { await api('/api/restart', {}); toast('Restarting: beckon finishes running tasks first.'); } catch (err) { fail(err); }
-    } }, 'Restart');
-    const log = h('pre', {}, o.log || '(empty log)');
-    show(
-      h('div', { class: 'grid' },
-        h('div', { class: 'card' }, h('div', { class: 'head' }, h('div', { class: 'k' }, 'beckon'), restart),
-          h('div', { class: 'v' }, h('span', { class: 'dot ' + (d ? 'ok' : 'bad') }), d ? 'Running' : 'Stopped'),
-          h('div', { class: 's' }, d ? `pid ${d.pid} · up ${dur(d.secs)}` : 'Start it with: beckon service install')),
-        stat('Slack', o.slack.status, since(o.slack), STATE[o.slack.status] ?? ''),
-        stat('Secret relay', o.relay.status, since(o.relay), STATE[o.relay.status] ?? ''),
-        stat('Config', o.config.status, o.config.status === 'rejected' ? 'see the log below' : since(o.config), STATE[o.config.status] ?? ''),
-        stat('Memory', d ? mb(d.treeRssKb) : '–', d ? `daemon ${mb(d.rssKb)} · ${d.procs} processes with runs · this UI ${o.ui ? mb(o.ui.rssKb) : '?'}` : ''),
-        stat('CPU', d ? d.treeCpu.toFixed(1) + '%' : '–', d ? `daemon ${d.cpu.toFixed(1)}%` : ''),
-        stat('Setup', `${o.projects} project${o.projects === 1 ? '' : 's'}`, `${o.schedules} schedule(s) · ${o.watches} watch(es) · ${o.threads} threads`),
-      ),
-      projectsBlock(o.projectList ?? []),
-      h('h2', {}, `Running now (${o.runs.length})`),
-      o.runs.length ? h('div', { class: 'wrap' }, h('table', {}, h('tr', {}, h('th', {}, 'Project'), h('th', {}, 'Task'), h('th', { class: 'n' }, 'Time'), h('th', { class: 'n' }, 'Memory'), h('th', { class: 'n' }, 'CPU')),
-        o.runs.map((r) => h('tr', {}, h('td', {}, r.project + (r.agent ? ` / ${r.agent}` : '')), h('td', {}, r.title), h('td', { class: 'n' }, dur(r.secs)), h('td', { class: 'n' }, mb(r.rssKb)), h('td', { class: 'n' }, r.cpu.toFixed(1) + '%')))))
-        : h('div', { class: 'muted' }, 'Nothing is running.'),
-      h('h2', {}, 'Log'), log,
-    );
-    log.scrollTop = log.scrollHeight;
-  };
-  await draw();
-  timer = setInterval(() => { if (!document.hidden) draw().catch(fail); }, 5000);
-}
-
-// Each project and its agents: who leads, how each shows in Slack, who is working.
-function projectsBlock(list) {
-  if (!list.length) return null;
-  return h('div', {},
-    h('h2', {}, 'Projects and agents'),
-    h('div', { class: 'stack' }, list.map((p) => h('div', { class: 'card' },
-      h('div', { class: 'head' }, h('h3', {}, p.name),
-        h('span', { class: 'muted' }, [`${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}`, p.lead ? `led by ${p.lead}` : '', `${p.running} running`].filter(Boolean).join(' · '))),
-      p.agents.length
-        ? h('div', { class: 'wrap' }, h('table', {},
-          h('tr', {}, h('th', {}, 'Agent'), h('th', {}, 'Role'), h('th', {}, 'In Slack'), h('th', {}, 'Now')),
-          p.agents.map((a) => h('tr', {},
-            h('td', { style: 'white-space:nowrap' }, h('b', {}, a.name), a.agent !== a.name ? h('span', { class: 'muted' }, ` (${a.agent})`) : null),
-            h('td', {}, [a.lead ? 'lead' : '', a.default ? 'default' : '', a.description || ''].filter(Boolean).join(' · ')),
-            h('td', { class: a.appMissing ? 'warn' : '' }, a.slack),
-            h('td', { style: 'white-space:nowrap' }, h('span', { class: 'dot ' + (a.running ? 'ok' : '') }), a.running ? `working (${a.running})` : 'idle')))))
-        : h('div', { class: 'muted' }, 'No agents: tasks run as plain Claude Code. Add them in Projects.')))));
+async function overview(my) {
+  const o = await freshOv();
+  if (my !== seq) return;
+  const d = o.daemon;
+  header('Tổng quan', d ? `pid ${d.pid} · chạy được ${short(d.secs)}` : 'beckon không chạy', [
+    h('button', { class: 'btn', disabled: !d, onclick: async (e) => {
+      const b = e.currentTarget;
+      if (!(await ask('Khởi động lại beckon?', 'beckon làm xong các việc đang chạy rồi mới khởi động lại.', 'Khởi động lại'))) return;
+      b.disabled = true;
+      try { await api('/api/restart', {}); toast('Đang khởi động lại: beckon làm xong việc đang chạy trước.'); } catch (err) { fail(err); }
+    } }, icon('restart'), 'Khởi động lại')]);
+  const since = (x) => x.at ? 'từ ' + when(x.at) : '';
+  fill(view, h('div', { class: 'page' },
+    h('div', { class: 'box strip' },
+      cell('beckon', d ? 'Đang chạy' : 'Đã dừng', d ? 'chạy được ' + short(d.secs) : 'beckon service install', d ? 'ok' : 'bad'),
+      cell('Slack', WORD[o.slack.status] ?? o.slack.status, since(o.slack), STATE[o.slack.status] ?? ''),
+      cell('Secret relay', WORD[o.relay.status] ?? o.relay.status, since(o.relay), STATE[o.relay.status] ?? ''),
+      cell('Cấu hình', WORD[o.config.status] ?? o.config.status, o.config.status === 'rejected' ? 'xem Log' : since(o.config), STATE[o.config.status] ?? ''),
+      cell('Bộ nhớ', d ? mb(d.treeRssKb) : '–', d ? `daemon ${mb(d.rssKb)} · app ${o.ui ? mb(o.ui.rssKb) : '?'}` : ''),
+      cell('CPU', d ? d.treeCpu.toFixed(1) + '%' : '–', d ? `${d.procs} tiến trình` : '')),
+    h('h2', {}, 'Projects'),
+    h('div', { class: 'cards' }, o.projectList.map((p) => h('button', { class: 'box card', onclick: () => go({ v: 'project', p: p.name }) },
+      h('div', { class: 'who' }, h('div', { class: 'av f' }, icon('folder')),
+        h('div', {}, h('b', {}, p.name), h('div', { class: 'muted small' }, [p.agents.length ? `${p.agents.length} agent` : 'Chưa có agent', p.lead ? 'lead ' + p.lead : null].filter(Boolean).join(' · ')))),
+      p.agents.length ? h('div', { class: 'team' }, p.agents.map((a) => avatar(a, 's'))) : null,
+      h('div', { class: 'foot' }, h('span', { class: 'dot ' + (p.running ? 'ok pulse' : '') }), h('span', { class: 'grow' }, p.running ? `${p.running} đang chạy` : 'Rảnh'), icon('chev')))),
+      h('button', { class: 'card add', onclick: addProject }, icon('plus'), 'Thêm project')),
+    h('h2', {}, 'Đang chạy', o.runs.length ? h('span', { class: 'count live' }, o.runs.length) : null),
+    runRows(o.runs, true)));
 }
 
-// ---- projects, schedules, watches, settings (edits config.json) ----
-let cfg, version;
+// ---- a project ----
+const SUBS = { agents: 'Agents', runs: 'Runs', plan: 'Lịch & watch', settings: 'Cài đặt' };
+async function project(my) {
+  const name = page.p, sub = page.s ?? 'agents';
+  const p = ov.projectList.find((x) => x.name === name);
+  if (sub === 'agents' && page.a) return agentEdit(my, name, page.a);
+  const seg = h('div', { class: 'seg' }, Object.entries(SUBS).map(([k, l]) => h('button', { class: k === sub ? 'on' : '', onclick: () => go({ v: 'project', p: name, s: k }) }, l)));
+  const status = h('span', {}, h('span', { class: 'dot ' + (p.running ? 'ok' : '') }), ' ',
+    [p.running ? `${p.running} đang chạy` : 'Rảnh', p.agents.length ? `${p.agents.length} agent` : null, p.lead ? 'lead ' + p.lead : null].filter(Boolean).join(' · '));
+  if (sub === 'agents') {
+    const runs = ov.runs.filter((r) => r.project === name);
+    const recent = (await threads()).filter((t) => t.project === name && !t.running).slice(0, 6);
+    if (my !== seq) return;
+    header(name, status, [seg]);
+    fill(view, h('div', { class: 'page' },
+      h('h2', {}, 'Agents'),
+      h('div', { class: 'cards' }, p.agents.map((a) => h('button', { class: 'box card', onclick: () => go({ v: 'project', p: name, s: 'agents', a: a.name }) },
+        h('div', { class: 'who' }, avatar(a, 'l', !!a.running),
+          h('div', {}, h('div', { style: 'display:flex;gap:5px;align-items:center' }, h('b', {}, a.name), a.lead ? h('span', { class: 'pill a' }, 'lead') : null, a.default ? h('span', { class: 'pill' }, 'mặc định') : null),
+            h('div', { class: 'muted small' }, a.agent !== a.name ? `agent ${a.agent}` : 'Claude Code agent'))),
+        h('div', { class: 'desc' }, a.description || 'Chưa có mô tả'),
+        h('div', { class: 'foot' }, h('span', { class: 'dot ' + (a.running ? 'ok pulse' : '') }), h('span', {}, a.running ? 'Đang làm' : 'Rảnh'), h('span', {}, '·'),
+          h('span', { class: 'grow' + (a.appMissing ? ' warn' : ''), title: a.slack }, a.slack)))),
+        h('button', { class: 'card add', onclick: () => addAgent(name) }, icon('plus'), 'Thêm agent')),
+      p.agents.length ? null : h('p', { class: 'muted' }, 'Chưa có agent: việc ở project này chạy bằng Claude Code thường.'),
+      h('h2', {}, 'Đang chạy'), runRows(runs, false),
+      h('h2', {}, 'Gần đây', h('button', { class: 'link', onclick: () => go({ v: 'project', p: name, s: 'runs' }) }, 'Xem tất cả')),
+      recent.length ? threadRows(recent) : h('div', { class: 'box empty' }, 'Chưa có việc nào.')));
+  } else if (sub === 'runs') {
+    const list = (await threads(true)).filter((t) => t.project === name);
+    if (my !== seq) return;
+    const q = h('input', { placeholder: 'Tìm việc' });
+    const box = h('div');
+    const filter = () => { const s = q.value.toLowerCase(); const f = list.filter((t) => !s || `${t.title} ${t.agent ?? ''}`.toLowerCase().includes(s)); box.replaceChildren(f.length ? threadRows(f, true) : h('div', { class: 'box empty' }, 'Không có việc nào khớp.')); };
+    q.addEventListener('input', filter); filter();
+    header(name, status, [h('div', { class: 'search' }, icon('search'), q), seg]);
+    fill(view, h('div', { class: 'page' }, box));
+  } else {
+    await ensureConfig();
+    if (my !== seq) return;
+    header(name, status, [seg]);
+    if (!cfg.projects[name]) return fill(view, h('div', { class: 'page' }, h('div', { class: 'box empty' }, `Đã gỡ ${name}. Bấm Lưu để áp dụng, hoặc Bỏ để giữ lại.`)));
+    if (sub === 'plan') planPage(name); else projectSettings(name);
+  }
+}
+function threadRows(list, head) {
+  return h('div', { class: 'box list' },
+    head ? h('div', { class: 'r head' }, h('div', { style: 'width:32px' }), h('div', { class: 'main' }, `${list.length} việc`), h('div', { class: 'n' }, 'Lần cuối'), h('div', { class: 'n opt' }, 'Output'), h('div', { class: 'n opt' }, 'Tổng token')) : null,
+    list.map((t) => {
+      const a = agentOf(t.project, t.agent);
+      const by = t.createdBy === 'schedule' ? 'theo lịch' : t.createdBy === 'watch' ? 'cảnh báo' : null;
+      return h('div', { class: 'r' },
+        a ? avatar(a, '', t.running || undefined) : h('div', { class: 'av g' }, icon(t.createdBy === 'schedule' ? 'clock' : t.createdBy === 'watch' ? 'bell' : 'chat')),
+        h('div', { class: 'main' }, h('div', { title: t.title }, t.title),
+          h('div', { class: 'meta' }, [t.agent, by, t.running ? 'đang chạy' : null, t.allowAll ? 'cho phép hết' : null, t.worktreeRemoved ? 'đã xoá worktree' : null, when(t.createdAt)].filter(Boolean).join(' · '))),
+        h('div', { class: 'n', title: when(t.lastActive) }, ago(t.lastActive)),
+        h('div', { class: 'n opt', title: `input ${t.tokens[0]} · output ${t.tokens[1]} · cache read ${t.tokens[2]} · cache write ${t.tokens[3]}` }, t.tokens[4] ? num(t.tokens[1]) : '–'),
+        h('div', { class: 'n opt' }, t.tokens[4] ? num(total(t.tokens)) : '–'));
+    }));
+}
+
+// ---- forms: settings groups, label on the left and control on the right ----
 const PERMS = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions', 'dontAsk'];
-function markDirty() { dirty = true; document.getElementById('savebar')?.removeAttribute('hidden'); }
-function field(obj, key, label, kind = 'text', opts = {}) {
+function setDirty(v) {
+  dirty = v;
+  if (!v) { savebar.hidden = true; return; }
+  if (!savebar.hidden) return;
+  const errBox = h('div', { class: 'errs' });
+  fill(savebar, h('div', { class: 'msg' }, h('span', { class: 'dot warn' }), h('span', {}, 'Có thay đổi chưa lưu')), errBox,
+    h('button', { class: 'btn', onclick: () => { setDirty(false); render().catch(fail); } }, 'Bỏ'),
+    h('button', { class: 'btn p', onclick: async () => { if (await save(saveSource ? saveSource() : JSON.stringify(cfg, null, 2), errBox)) render().catch(fail); } }, 'Lưu'));
+  savebar.hidden = false;
+}
+const markDirty = () => setDirty(true);
+function control(obj, key, kind = 'text', opts = {}) {
   const get = () => obj[key];
   const set = (v) => { if (v === '' || v == null || (Array.isArray(v) && !v.length)) delete obj[key]; else obj[key] = v; markDirty(); };
-  let input;
-  if (kind === 'textarea') input = h('textarea', { rows: opts.rows || 3, oninput: (e) => set(e.target.value) }, get() ?? '');
-  else if (kind === 'select') input = h('select', { onchange: (e) => set(e.target.value) }, (opts.blank ? [''] : []).concat(opts.options).map((o) => h('option', { value: o, selected: (get() ?? opts.def) === o }, o || '(none)')));
-  else if (kind === 'number') input = h('input', { type: 'number', value: get() ?? '', placeholder: opts.placeholder, oninput: (e) => set(e.target.value === '' ? '' : Number(e.target.value)) });
-  else if (kind === 'list') input = h('input', { value: [].concat(get() ?? []).join(', '), placeholder: opts.placeholder, oninput: (e) => set(e.target.value.split(/[\s,]+/).filter(Boolean)) });
-  else if (kind === 'json') {
-    input = h('textarea', { rows: opts.rows || 4, oninput: (e) => {
-      const t = e.target.value.trim();
-      try { set(t ? JSON.parse(t) : ''); e.target.classList.remove('err'); e.target.dataset.bad = ''; } catch { e.target.classList.add('err'); e.target.dataset.bad = '1'; markDirty(); }
-    } }, get() == null ? '' : JSON.stringify(get(), null, 2));
-  } else input = h('input', { value: get() ?? '', placeholder: opts.placeholder, oninput: (e) => set(e.target.value) });
-  return h('div', { class: opts.full ? 'full' : '' }, h('label', {}, label), input);
+  const cls = opts.mono ? 'mono' : null;
+  if (kind === 'textarea') return h('textarea', { rows: opts.rows || 3, class: cls, oninput: (e) => set(e.target.value) }, get() ?? '');
+  if (kind === 'select') return h('select', { onchange: (e) => set(e.target.value) }, (opts.blank != null ? [''] : []).concat(opts.options).map((o) => h('option', { value: o, selected: (get() ?? opts.def ?? '') === o }, o || opts.blank)));
+  if (kind === 'number') return h('input', { type: 'number', value: get() ?? '', placeholder: opts.placeholder, style: 'max-width:110px;text-align:right', oninput: (e) => set(e.target.value === '' ? '' : Number(e.target.value)) });
+  if (kind === 'list') return h('input', { class: cls, value: [].concat(get() ?? []).join(', '), placeholder: opts.placeholder, oninput: (e) => set(e.target.value.split(/[\s,]+/).filter(Boolean)) });
+  if (kind === 'json') return h('textarea', { class: 'mono', rows: opts.rows || 4, spellcheck: 'false', oninput: (e) => {
+    const t = e.target.value.trim();
+    try { set(t ? JSON.parse(t) : ''); e.target.classList.remove('err'); e.target.dataset.bad = ''; } catch { e.target.classList.add('err'); e.target.dataset.bad = '1'; markDirty(); }
+  } }, get() == null ? '' : JSON.stringify(get(), null, 2));
+  return h('input', { class: cls, value: get() ?? '', placeholder: opts.placeholder, spellcheck: opts.mono ? 'false' : null, oninput: (e) => set(e.target.value) });
 }
-function card(title, onDelete, ...body) {
-  return h('div', { class: 'card' }, h('div', { class: 'head' }, h('h3', {}, title), onDelete ? h('button', { class: 'b d', onclick: onDelete }, 'Remove') : null), h('div', { class: 'row' }, body));
+function row(label, hint, ctl, stack) {
+  return h('div', { class: 'srow' + (stack ? ' stack' : '') }, h('label', {}, label, hint ? h('small', {}, hint) : null), stack ? ctl : h('div', { class: 'ctl' }, ctl));
 }
-async function loadConfig() { const c = await api('/api/config'); version = c.version; cfg = JSON.parse(c.text); return c; }
+const f = (obj, key, label, hint, kind, opts = {}) => row(label, hint, control(obj, key, kind, opts), kind === 'textarea' || kind === 'json');
+function group(title, rows, action) {
+  return h('div', { class: 'group' }, title ? h('div', { class: 'gt' }, title, action) : null, h('div', { class: 'box' }, rows));
+}
 async function save(text, errBox) {
-  if (view.querySelector('[data-bad="1"]')) { toast('Fix the fields marked red first.'); return false; }
+  if (view.querySelector('[data-bad="1"]')) { toast('Sửa các ô đang báo đỏ trước.'); return false; }
   try {
     const r = await api('/api/config', { text, version });
-    if (!r.ok) { errBox.replaceChildren(h('b', {}, 'beckon would not accept this config:'), h('ul', { class: 'errs' }, r.errors.map((e) => h('li', {}, e)))); return false; }
-    version = r.version; dirty = false; errBox.replaceChildren(); toast('Saved. beckon applies it within a second.');
+    if (!r.ok) { errBox.replaceChildren(h('b', {}, 'beckon không nhận cấu hình này:'), h('ul', { class: 'errs' }, r.errors.map((e) => h('li', {}, e)))); return false; }
+    version = r.version; setDirty(false); toast('Đã lưu. beckon áp dụng trong vòng một giây.');
+    await refreshOv().catch(() => {});
     return true;
-  } catch (e) { if (e.status === 409) errBox.replaceChildren(h('b', { style: 'color:var(--bad)' }, e.message)); else fail(e); return false; }
-}
-async function projects() {
-  await loadConfig();
-  cfg.projects ??= {}; cfg.schedules ??= []; cfg.watches ??= [];
-  const names = () => Object.keys(cfg.projects);
-  const errBox = h('div');
-  const rerender = () => { draw(); markDirty(); };
-  // A project's agents: add, edit and remove them, and pick the lead and the default.
-  const agentsBlock = (p) => {
-    const agents = p.agents ?? {};
-    const keys = Object.keys(agents);
-    const add = h('input', { placeholder: 'new agent, like qa' });
-    return h('div', { class: 'full agents' },
-      h('h4', {}, `Agents (${keys.length})`),
-      keys.length
-        ? h('div', { class: 'row' },
-          field(p, 'lead', 'Lead (plans the work and runs the team)', 'select', { options: keys, blank: true }),
-          field(p, 'defaultAgent', 'Default agent (tasks that tag nobody)', 'select', { options: keys, blank: true }))
-        : h('div', { class: 'muted' }, 'No agents yet: tasks run as plain Claude Code.'),
-      keys.map((k) => {
-        const a = agents[k];
-        return h('div', { class: 'agent' },
-          h('div', { class: 'head' }, h('b', {}, k + (p.lead === k ? '  · lead' : '') + (p.defaultAgent === k ? '  · default' : '')),
-            h('button', { class: 'b d', onclick: () => {
-              delete agents[k];
-              if (!Object.keys(agents).length) delete p.agents;
-              if (p.lead === k) delete p.lead;
-              if (p.defaultAgent === k) delete p.defaultAgent;
-              rerender();
-            } }, 'Remove')),
-          h('div', { class: 'row' },
-            field(a, 'agent', 'Claude Code agent (.claude/agents/<name>.md)', 'text', { placeholder: k }),
-            field(a, 'description', 'What it does'),
-            field(a, 'skills', 'Skills folders', 'list', { placeholder: `.claude/roles/${k}` }),
-            field(a, 'slackApp', 'Own Slack app', 'text', { placeholder: 'empty: posts as beckon · main: is beckon' }),
-            field(a, 'channels', 'Takes new tasks in channels', 'list', { placeholder: 'none' }),
-            field(a, 'model', 'Model', 'text', { placeholder: 'from the agent file' })));
-      }),
-      h('div', { class: 'head', style: 'margin-top:8px' }, add, h('button', { class: 'b', onclick: () => {
-        const k = add.value.trim();
-        if (!/^[a-z0-9][a-z0-9_-]*$/i.test(k)) return toast('Agent names use letters, digits, dash and underscore.');
-        if (keys.some((x) => x.toLowerCase() === k.toLowerCase())) return toast('That name is taken.');
-        p.agents = { ...agents, [k]: {} };
-        rerender();
-      } }, 'Add agent')));
-  };
-  const draw = () => {
-    const proj = names().map((n) => {
-      const p = cfg.projects[n];
-      const count = Object.keys(p.agents ?? {}).length;
-      return card(n + (cfg.defaultProject === n || (!cfg.defaultProject && names().length === 1) ? '  · default' : '') + (count ? `  · ${count} agent${count === 1 ? '' : 's'}` : ''),
-        () => { if (confirm(`Remove project "${n}" from beckon? The repository is not touched.`)) { delete cfg.projects[n]; if (cfg.defaultProject === n) delete cfg.defaultProject; rerender(); } },
-        field(p, 'path', 'Folder (git repository)', 'text', { placeholder: '~/code/myapp' }),
-        field(p, 'channels', 'Channels', 'list', { placeholder: '#myapp, C0123ABC' }),
-        field(p, 'baseBranch', 'Base branch', 'text', { placeholder: 'remote default' }),
-        field(p, 'model', 'Model', 'text', { placeholder: 'Claude default' }),
-        field(p, 'permissionMode', 'Permission mode', 'select', { options: PERMS, def: 'acceptEdits' }),
-        field(p, 'setup', 'Setup command (new worktrees)', 'text', { placeholder: 'npm ci' }),
-        field(p, 'mcpConfig', 'Extra MCP config', 'text', { placeholder: '~/.beckon/mcp-screen.json' }),
-        field(p, 'instructions', 'Instructions for Claude', 'textarea', { full: true, rows: 4 }),
-        field(p, 'alwaysAsk', 'Always ask (JSON list of regexes or { tool, match, label })', 'json', { full: true }),
-        agentsBlock(p),
-      );
-    });
-    const newName = h('input', { placeholder: 'new project name' });
-    const sched = cfg.schedules.map((s, i) => card(s.name || `schedule ${i + 1}`, () => { cfg.schedules.splice(i, 1); rerender(); },
-      field(s, 'name', 'Name'), field(s, 'cron', 'Cron', 'text', { placeholder: '0 8 * * 1-5' }), field(s, 'timezone', 'Time zone', 'text', { placeholder: 'UTC' }),
-      field(s, 'project', 'Project', 'select', { options: names() }), field(s, 'agent', 'Agent', 'select', { options: Object.keys(cfg.projects[s.project]?.agents ?? {}), blank: true }), field(s, 'channel', 'Channel or member ID'),
-      field(s, 'prompt', 'Prompt', 'textarea', { full: true, rows: 4 })));
-    const watches = cfg.watches.map((w, i) => card(w.name || w.channel || `watch ${i + 1}`, () => { cfg.watches.splice(i, 1); rerender(); },
-      field(w, 'name', 'Name'), field(w, 'channel', 'Channel', 'text', { placeholder: '#myapp-alerts' }),
-      field(w, 'project', 'Project', 'select', { options: names() }), field(w, 'agent', 'Agent', 'select', { options: Object.keys(cfg.projects[w.project]?.agents ?? {}), blank: true }), field(w, 'match', 'Match (regex, case ignored)', 'text', { placeholder: ':red_circle:|ERROR' }),
-      field(w, 'from', 'Only from (bot names or IDs)', 'list', { placeholder: 'anyone' }), field(w, 'cooldownMinutes', 'Cooldown (minutes)', 'number', { placeholder: '60' }),
-      field(w, 'prompt', 'Prompt (empty: investigate only)', 'textarea', { full: true, rows: 3 })));
-    show(
-      h('h2', {}, 'Projects'),
-      h('div', { class: 'stack' }, proj,
-        h('div', { class: 'card' }, h('div', { class: 'head' }, newName, h('button', { class: 'b', onclick: () => {
-          const n = newName.value.trim();
-          if (!/^[a-z0-9][a-z0-9._-]*$/i.test(n)) return toast('Use letters, digits, dot, dash and underscore.');
-          if (names().some((x) => x.toLowerCase() === n.toLowerCase())) return toast('That name is taken.');
-          cfg.projects[n] = { path: '', channels: [] }; rerender();
-        } }, 'Add project')),
-          names().length > 1 ? h('div', {}, h('label', {}, 'Default project (for DMs)'), h('select', { onchange: (e) => { cfg.defaultProject = e.target.value; rerender(); } }, names().map((n) => h('option', { selected: cfg.defaultProject === n }, n)))) : null)),
-      h('h2', {}, 'Schedules'),
-      h('div', { class: 'stack' }, sched, h('button', { class: 'b', onclick: () => { cfg.schedules.push({ name: '', cron: '0 8 * * 1-5', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, project: names()[0], channel: '', prompt: '' }); rerender(); } }, 'Add schedule')),
-      h('h2', {}, 'Alert watches'),
-      h('div', { class: 'stack' }, watches, h('button', { class: 'b', onclick: () => { cfg.watches.push({ channel: '', project: names()[0], match: ':red_circle:' }); rerender(); } }, 'Add watch')),
-      h('h2', {}, 'Settings'),
-      card('Access and limits', null,
-        field(cfg, 'users', 'Slack members who may use beckon', 'list', { full: true }),
-        field(cfg, 'maxParallel', 'Runs at once', 'number', { placeholder: '3' }),
-        field(cfg, 'approvalTimeoutMinutes', 'Approval timeout (minutes)', 'number', { placeholder: '60' }),
-        field(cfg, 'keepDays', 'Keep idle worktrees (days)', 'number', { placeholder: '7' }),
-        field(cfg, 'shutdownGraceMinutes', 'Restart grace (minutes)', 'number', { placeholder: '30' }),
-        field(cfg, 'secretRelay', 'Secret relay (JSON)', 'json', { full: true, rows: 3 })),
-      h('div', { class: 'savebar', id: 'savebar', hidden: !dirty },
-        h('button', { class: 'b p', onclick: async () => { if (await save(JSON.stringify(cfg, null, 2), errBox)) { document.getElementById('savebar').hidden = true; } } }, 'Save'),
-        h('button', { class: 'b', onclick: () => { dirty = false; projects().catch(fail); } }, 'Discard'),
-        h('span', { class: 'muted' }, 'Unsaved changes'), errBox),
-    );
-  };
-  draw();
+  } catch (e) { if (e.status === 409) errBox.replaceChildren(h('b', {}, e.message)); else fail(e); return false; }
 }
 
-// ---- runs ----
-async function threads() {
-  const { threads: list } = await api('/api/threads');
-  const q = h('input', { placeholder: 'Filter by project or task', style: 'max-width:320px' });
-  const body = h('tbody');
-  const fill = () => {
-    const s = q.value.toLowerCase();
-    body.replaceChildren(...list.filter((t) => !s || `${t.project} ${t.title}`.toLowerCase().includes(s)).map((t) => h('tr', {},
-      h('td', { style: 'white-space:nowrap' }, h('span', { class: 'dot ' + (t.running ? 'ok' : ''), title: t.running ? 'running' : 'idle' }), t.project),
-      h('td', {}, t.title, t.allowAll ? h('span', { class: 'muted' }, ' · all allowed') : null, h('div', { class: 's' }, [t.agent ? `${t.agent} agent` : '', t.createdBy === 'schedule' ? 'schedule' : t.createdBy === 'watch' ? 'alert watch' : '', t.worktreeRemoved ? 'worktree removed' : ''].filter(Boolean).join(' · '))),
-      h('td', { class: 'n' }, ago(t.lastActive)),
-      h('td', { class: 'n', title: `input ${t.tokens[0]} · output ${t.tokens[1]} · cache read ${t.tokens[2]} · cache write ${t.tokens[3]}` }, t.tokens[4] ? num(t.tokens[1]) : '–'),
-      h('td', { class: 'n' }, t.tokens[4] ? num(total(t.tokens)) : '–'),
-    )));
-  };
-  q.addEventListener('input', fill);
-  fill();
-  show(h('div', { class: 'head' }, h('h2', { style: 'margin:0' }, `Runs (${list.length})`), q), h('div', { class: 'wrap', style: 'margin-top:10px' },
-    h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Project'), h('th', {}, 'Task'), h('th', { class: 'n' }, 'Last active'), h('th', { class: 'n' }, 'Output'), h('th', { class: 'n' }, 'All tokens'))), body)));
+function projectSettings(name) {
+  const p = cfg.projects[name];
+  const keys = Object.keys(p.agents ?? {});
+  fill(view, h('div', { class: 'page', style: 'max-width:760px' },
+    group('Kho mã', [
+      f(p, 'path', 'Thư mục', 'git repository của project', 'text', { mono: true, placeholder: '~/code/myapp' }),
+      f(p, 'baseBranch', 'Nhánh gốc', null, 'text', { mono: true, placeholder: 'nhánh mặc định của remote' }),
+      f(p, 'setup', 'Lệnh setup', 'chạy khi tạo worktree mới', 'text', { mono: true, placeholder: 'npm ci' })]),
+    group('Slack', [f(p, 'channels', 'Kênh', 'tên hoặc ID, cách nhau bằng dấu phẩy', 'list', { mono: true, placeholder: '#myapp, C0123ABC' })]),
+    keys.length ? group('Đội', [
+      f(p, 'lead', 'Lead', 'lên kế hoạch và điều phối các agent khác', 'select', { options: keys, blank: '(không)' }),
+      f(p, 'defaultAgent', 'Agent mặc định', 'nhận việc không tag ai', 'select', { options: keys, blank: '(không)' })]) : null,
+    group('Claude', [
+      f(p, 'model', 'Model', null, 'text', { placeholder: 'mặc định của Claude' }),
+      f(p, 'permissionMode', 'Chế độ quyền', null, 'select', { options: PERMS, def: 'acceptEdits' }),
+      f(p, 'mcpConfig', 'MCP config thêm', null, 'text', { mono: true, placeholder: '~/.beckon/mcp-screen.json' }),
+      f(p, 'instructions', 'Hướng dẫn cho Claude', null, 'textarea', { rows: 6 }),
+      f(p, 'alwaysAsk', 'Luôn hỏi trước', 'danh sách JSON: regex hoặc { tool, match, label }', 'json', { rows: 6 })]),
+    group(null, [row('Gỡ ' + name + ' khỏi beckon', 'repository giữ nguyên; lịch và watch của project cũng bị gỡ', h('button', { class: 'btn d', onclick: async () => {
+      if (!(await ask(`Gỡ project "${name}"?`, 'beckon thôi nhận việc cho project này. Repository giữ nguyên. Chỉ có hiệu lực khi bấm Lưu.', 'Gỡ', true))) return;
+      delete cfg.projects[name]; if (cfg.defaultProject === name) delete cfg.defaultProject;
+      cfg.schedules = cfg.schedules.filter((s) => s.project !== name); cfg.watches = cfg.watches.filter((w) => w.project !== name);
+      markDirty(); project(++seq);
+    } }, 'Gỡ project'))])));
+}
+
+async function agentEdit(my, name, key) {
+  await ensureConfig();
+  if (my !== seq) return;
+  const p = cfg.projects[name];
+  const a = p?.agents?.[key];
+  const back = () => go({ v: 'project', p: name, s: 'agents' });
+  if (!a) { page = { v: 'project', p: name, s: 'agents' }; return render(); }
+  const live = agentOf(name, key);
+  header(key, name + ' · agent', [], back);
+  const flag = (prop, label, hint) => row(label, hint, h('input', { type: 'checkbox', checked: p[prop] === key, onchange: (e) => { if (e.target.checked) p[prop] = key; else delete p[prop]; markDirty(); } }));
+  fill(view, h('div', { class: 'page', style: 'max-width:760px' },
+    h('div', { class: 'box', style: 'display:flex;gap:14px;align-items:center;padding:16px;margin-bottom:20px' },
+      avatar({ name: key, agent: a.agent, app: a.slackApp?.toUpperCase(), lead: p.lead === key }, 'l', live ? !!live.running : undefined),
+      h('div', { style: 'min-width:0' }, h('b', { style: 'font-size:15px' }, key), h('div', { class: 'muted' }, a.description || 'Chưa có mô tả'),
+        live ? h('div', { class: 'small' + (live.appMissing ? ' warn' : ' muted') }, (live.running ? 'Đang làm' : 'Rảnh') + ' · ' + live.slack) : h('div', { class: 'small muted' }, 'Mới: bấm Lưu để thêm'))),
+    group('Agent', [
+      f(a, 'description', 'Mô tả', 'lead đọc để biết giao việc gì', 'text', { placeholder: 'vd: kiểm tính năng, test, báo lỗi' }),
+      f(a, 'agent', 'File agent', '.claude/agents/<tên>.md', 'text', { mono: true, placeholder: key }),
+      f(a, 'skills', 'Thư mục skill', 'chứa skills/<tên>/SKILL.md', 'list', { mono: true, placeholder: `.claude/roles/${key}` }),
+      f(a, 'model', 'Model', null, 'text', { placeholder: 'theo file agent' }),
+      f(a, 'permissionMode', 'Chế độ quyền', null, 'select', { options: PERMS, blank: '(theo project)' })]),
+    group('Vai trò', [flag('lead', 'Lead của đội', 'nhận mọi việc và tự điều phối agent khác'), flag('defaultAgent', 'Agent mặc định', 'nhận việc không tag ai')]),
+    group('Slack', [
+      f(a, 'slackApp', 'App Slack riêng', 'trống: đăng qua beckon với tên riêng · main: chính là beckon', 'text', { mono: true, placeholder: 'vd: QA' }),
+      f(a, 'displayName', 'Tên hiển thị', 'khi đăng qua beckon', 'text', { placeholder: key.length <= 3 ? key.toUpperCase() : key[0].toUpperCase() + key.slice(1) }),
+      f(a, 'icon', 'Biểu tượng', 'emoji Slack hoặc link https', 'text', { mono: true, placeholder: ':robot_face:' }),
+      f(a, 'channels', 'Nhận việc mới ở kênh', 'trong các kênh của project', 'list', { mono: true, placeholder: 'không' })]),
+    group(null, [row('Xoá agent ' + key, 'file .claude/agents không bị đụng tới', h('button', { class: 'btn d', onclick: async () => {
+      if (!(await ask(`Xoá agent "${key}"?`, 'Chỉ có hiệu lực khi bấm Lưu.', 'Xoá', true))) return;
+      delete p.agents[key]; if (!Object.keys(p.agents).length) delete p.agents;
+      if (p.lead === key) delete p.lead; if (p.defaultAgent === key) delete p.defaultAgent;
+      markDirty(); page = { v: 'project', p: name, s: 'settings' }; project(++seq);
+      toast(`Đã xoá ${key}. Bấm Lưu để áp dụng.`);
+    } }, 'Xoá agent'))])));
+}
+
+async function addAgent(name) {
+  if (dirty) return toast('Lưu hoặc bỏ thay đổi đang có trước.');
+  await loadConfig();
+  const input = h('input', { placeholder: 'vd: qa', class: 'mono', spellcheck: 'false' });
+  const k = await sheet({ title: 'Thêm agent', text: 'Tên để tag trong Slack (@qa), mặc định chạy .claude/agents/<tên>.md.', body: [h('label', {}, 'Tên'), input], ok: 'Thêm', onOk: async () => {
+    const v = input.value.trim();
+    if (!/^[a-z0-9][a-z0-9_-]*$/i.test(v)) throw new Error('Tên dùng chữ, số, gạch ngang và gạch dưới.');
+    if (Object.keys(cfg.projects[name].agents ?? {}).some((x) => x.toLowerCase() === v.toLowerCase())) throw new Error('Tên này đã có.');
+    return v;
+  } });
+  if (!k) return;
+  cfg.projects[name].agents = { ...(cfg.projects[name].agents ?? {}), [k]: {} };
+  markDirty();
+  page = { v: 'project', p: name, s: 'agents', a: k };
+  agentEdit(++seq, name, k).catch(fail);
+}
+
+async function addProject() {
+  if (dirty) return toast('Lưu hoặc bỏ thay đổi đang có trước.');
+  const name = h('input', { placeholder: 'vd: myapp', spellcheck: 'false' });
+  const path = h('input', { class: 'mono', placeholder: '~/code/myapp', spellcheck: 'false' });
+  const chans = h('input', { class: 'mono', placeholder: '#myapp, C0123ABC', spellcheck: 'false' });
+  const n = await sheet({ title: 'Thêm project', text: 'beckon làm việc trong repository này và nhận việc ở các kênh Slack này.', ok: 'Thêm',
+    body: [h('label', {}, 'Tên'), name, h('label', {}, 'Thư mục (git repository)'), path, h('label', {}, 'Kênh Slack'), chans],
+    onOk: async (err) => {
+      const v = name.value.trim();
+      if (!/^[a-z0-9][a-z0-9._-]*$/i.test(v)) throw new Error('Tên dùng chữ, số, dấu chấm, gạch ngang và gạch dưới.');
+      await loadConfig();
+      if (Object.keys(cfg.projects).some((x) => x.toLowerCase() === v.toLowerCase())) throw new Error('Tên này đã có.');
+      cfg.projects[v] = { path: path.value.trim(), channels: chans.value.split(/[\s,]+/).filter(Boolean) };
+      return (await save(JSON.stringify(cfg, null, 2), err)) ? v : false;
+    } });
+  if (n) go({ v: 'project', p: n, s: 'settings' });
+}
+
+function planPage(name) {
+  const agents = Object.keys(cfg.projects[name]?.agents ?? {});
+  const redraw = () => { markDirty(); const top = view.scrollTop; planPage(name); view.scrollTop = top; };
+  const title = (icn, t) => h('span', { style: 'display:flex;gap:6px;align-items:center' }, icon(icn), t);
+  const sched = cfg.schedules.map((s, i) => [s, i]).filter(([s]) => s.project === name).map(([s, i]) => group(title('clock', s.name || 'Lịch ' + (i + 1)), [
+    f(s, 'name', 'Tên'),
+    f(s, 'cron', 'Cron', 'phút giờ ngày tháng thứ', 'text', { mono: true, placeholder: '0 8 * * 1-5' }),
+    f(s, 'timezone', 'Múi giờ', null, 'text', { placeholder: 'UTC' }),
+    agents.length ? f(s, 'agent', 'Agent', null, 'select', { options: agents, blank: '(mặc định)' }) : null,
+    f(s, 'channel', 'Đăng vào', 'kênh hoặc ID người nhận', 'text', { mono: true }),
+    f(s, 'prompt', 'Việc cần làm', null, 'textarea', { rows: 4 })],
+  h('button', { class: 'btn d', onclick: () => { cfg.schedules.splice(i, 1); redraw(); } }, 'Xoá')));
+  const watches = cfg.watches.map((w, i) => [w, i]).filter(([w]) => w.project === name).map(([w, i]) => group(title('bell', w.name || w.channel || 'Watch ' + (i + 1)), [
+    f(w, 'name', 'Tên'),
+    f(w, 'channel', 'Kênh theo dõi', null, 'text', { mono: true, placeholder: '#myapp-alerts' }),
+    f(w, 'match', 'Khớp', 'regex, không phân biệt hoa thường', 'text', { mono: true, placeholder: ':red_circle:|ERROR' }),
+    f(w, 'from', 'Chỉ từ', 'tên bot hoặc ID; trống là bất kỳ ai', 'list', { mono: true, placeholder: 'bất kỳ' }),
+    agents.length ? f(w, 'agent', 'Agent', null, 'select', { options: agents, blank: '(mặc định)' }) : null,
+    f(w, 'cooldownMinutes', 'Nghỉ giữa hai lần', 'phút', 'number', { placeholder: '60' }),
+    f(w, 'prompt', 'Việc cần làm', 'trống: chỉ điều tra', 'textarea', { rows: 3 })],
+  h('button', { class: 'btn d', onclick: () => { cfg.watches.splice(i, 1); redraw(); } }, 'Xoá')));
+  fill(view, h('div', { class: 'page', style: 'max-width:760px' },
+    h('h2', {}, 'Lịch', h('button', { class: 'btn', onclick: () => { cfg.schedules.push({ name: '', cron: '0 8 * * 1-5', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, project: name, channel: '', prompt: '' }); redraw(); } }, icon('plus'), 'Thêm lịch')),
+    sched.length ? sched : h('div', { class: 'box empty', style: 'margin-bottom:20px' }, 'Chưa có lịch. Lịch giao việc cho beckon theo giờ, như báo cáo buổi sáng.'),
+    h('h2', {}, 'Watch cảnh báo', h('button', { class: 'btn', onclick: () => { cfg.watches.push({ channel: '', project: name, match: ':red_circle:' }); redraw(); } }, icon('plus'), 'Thêm watch')),
+    watches.length ? watches : h('div', { class: 'box empty' }, 'Chưa có watch. Watch theo dõi một kênh cảnh báo và tự điều tra khi có tin khớp.')));
 }
 
 // ---- usage ----
 let days = 14;
-async function usage() {
+async function usage(my) {
   const u = await api('/api/usage?days=' + days);
+  if (my !== seq) return;
   const sum = u.days.reduce((a, d) => a.map((x, i) => x + d.tokens[i]), [0, 0, 0, 0, 0]);
   const runs = u.days.reduce((a, d) => a + d.runs, 0);
   const max = Math.max(1, ...u.days.map((d) => d.tokens[1]));
-  const seg = h('div', { class: 'seg' }, [7, 14, 30, 90].map((n) => h('button', { class: n === days ? 'on' : '', onclick: () => { days = n; usage().catch(fail); } }, n + 'd')));
-  const tbl = (head, rows) => h('div', { class: 'wrap' }, h('table', {}, h('tr', {}, head.map((x, i) => h('th', { class: i ? 'n' : '' }, x))), rows));
-  const tokRow = (name, t) => h('tr', {}, h('td', {}, name), h('td', { class: 'n' }, num(t[1])), h('td', { class: 'n' }, num(t[0] + t[3])), h('td', { class: 'n' }, num(t[2])), h('td', { class: 'n' }, num(t[4])));
-  const tokHead = ['', 'Output', 'Input + cache write', 'Cache read', 'Messages'];
-  show(
-    h('div', { class: 'head' }, h('h2', { style: 'margin:0' }, 'Usage of beckon runs'), seg),
-    h('div', { class: 'grid', style: 'margin-top:12px' },
-      stat('Runs started', String(runs), `last ${days} days`),
-      stat('Output tokens', num(sum[1]), 'what Claude wrote'),
-      stat('Input tokens', num(sum[0] + sum[3]), 'new input and cache writes'),
-      stat('Cache reads', num(sum[2]), 'context re-read from cache'),
-      stat('Messages', num(sum[4]), 'model responses')),
-    h('h2', {}, 'Output tokens per day'),
-    h('div', { class: 'bars' }, u.days.map((d) => h('div', { title: `${d.day}: ${num(d.tokens[1])} output, ${num(total(d.tokens))} total, ${d.runs} run(s)` }, h('i', { style: `height:${(d.tokens[1] / max) * 100}%` })))),
-    h('div', { class: 'axis' }, h('span', {}, u.days[0]?.day), h('span', {}, u.days.at(-1)?.day)),
-    h('h2', {}, 'By model'), u.models.length ? tbl(tokHead, u.models.map((x) => tokRow(x.model, x.tokens))) : h('div', { class: 'muted' }, 'No usage in this period.'),
-    h('h2', {}, 'By project'), u.projects.length ? tbl(tokHead, u.projects.map((x) => tokRow(x.project, x.tokens))) : null,
-    h('h2', {}, 'Largest runs'), u.top.length ? tbl(['Task', 'Output', 'Input + cache write', 'Cache read', 'Messages'], u.top.map((x) => tokRow(`${x.project}: ${x.title}`, x.tokens))) : null,
-    h('p', { class: 'muted' }, 'Counted from Claude Code\'s transcripts of beckon\'s runs. Your Claude plan\'s limits are on claude.ai, under Settings > Usage.'),
-  );
+  header('Usage', 'Token của các việc beckon chạy', [h('div', { class: 'seg' }, [7, 14, 30, 90].map((n) => h('button', { class: n === days ? 'on' : '', onclick: () => { days = n; render().catch(fail); } }, n + ' ngày')))]);
+  const tbl = (head, rows) => h('div', { class: 'box tw' }, h('table', {}, h('tr', {}, head.map((x, i) => h('th', { class: i ? 'n' : '' }, x))), rows));
+  const tokRow = (name, t) => h('tr', {}, h('td', { class: 't' }, name), h('td', { class: 'n' }, num(t[1])), h('td', { class: 'n' }, num(t[0] + t[3])), h('td', { class: 'n' }, num(t[2])), h('td', { class: 'n' }, num(t[4])));
+  const head = (first) => [first, 'Output', 'Input + cache write', 'Cache read', 'Lượt trả lời'];
+  fill(view, h('div', { class: 'page' },
+    h('div', { class: 'box strip' },
+      cell('Việc', String(runs), `${days} ngày qua`),
+      cell('Output', num(sum[1]), 'Claude viết ra'),
+      cell('Input', num(sum[0] + sum[3]), 'input mới và cache write'),
+      cell('Cache read', num(sum[2]), 'ngữ cảnh đọc lại'),
+      cell('Lượt trả lời', num(sum[4]), 'phản hồi của model')),
+    h('h2', {}, 'Output mỗi ngày'),
+    h('div', { class: 'box chart' },
+      h('div', { class: 'bars' }, u.days.map((d) => h('div', { title: `${d.day}: ${num(d.tokens[1])} output, ${num(total(d.tokens))} tổng, ${d.runs} việc` }, h('i', { style: `height:${(d.tokens[1] / max) * 100}%` })))),
+      h('div', { class: 'axis' }, h('span', {}, u.days[0]?.day), h('span', {}, 'cao nhất ' + num(max) + ' / ngày'), h('span', {}, u.days.at(-1)?.day))),
+    h('h2', {}, 'Theo model'), u.models.length ? tbl(head('Model'), u.models.map((x) => tokRow(x.model, x.tokens))) : h('div', { class: 'box empty' }, 'Không có usage trong khoảng này.'),
+    u.projects.length ? [h('h2', {}, 'Theo project'), tbl(head('Project'), u.projects.map((x) => tokRow(x.project, x.tokens)))] : null,
+    u.top.length ? [h('h2', {}, 'Việc tốn nhiều nhất'), tbl(head('Việc'), u.top.map((x) => tokRow(`${x.project}: ${x.title}`, x.tokens)))] : null,
+    h('p', { class: 'muted small' }, 'Đếm từ transcript Claude Code của các việc beckon chạy. Giới hạn gói Claude xem ở claude.ai, mục Settings > Usage.')));
 }
 
-// ---- raw config ----
-async function config() {
-  const c = await loadConfig();
-  const ta = h('textarea', { style: 'min-height:60vh', spellcheck: 'false', oninput: () => { dirty = true; } }, c.text);
-  const errBox = h('div');
-  show(h('div', { class: 'head' }, h('h2', { style: 'margin:0' }, c.path), h('div', {},
-      h('button', { class: 'b', onclick: async () => {
-        try { const r = await api('/api/config/check', { text: ta.value }); errBox.replaceChildren(r.errors.length ? h('ul', { class: 'errs' }, r.errors.map((e) => h('li', {}, e))) : h('span', { style: 'color:var(--ok)' }, 'Looks good.')); } catch (e) { fail(e); }
-      } }, 'Check'), ' ',
-      h('button', { class: 'b p', onclick: () => save(ta.value, errBox) }, 'Save'))),
-    h('p', { class: 'muted' }, 'Saved only if beckon\'s own config check passes. beckon applies it without a restart.'),
-    errBox, ta);
+// ---- global settings, and the raw config file ----
+async function settings(my) {
+  await ensureConfig();
+  if (my !== seq) return;
+  if (page.raw) {
+    const ta = h('textarea', { class: 'mono', style: 'min-height:calc(100vh - 200px)', spellcheck: 'false', oninput: markDirty }, cfgText);
+    const errBox = h('div');
+    saveSource = () => ta.value;
+    header('config.json', h('span', { class: 'sel' }, cfgPath), [
+      h('button', { class: 'btn', onclick: async () => {
+        try { const r = await api('/api/config/check', { text: ta.value }); errBox.replaceChildren(r.errors.length ? h('ul', { class: 'errs' }, r.errors.map((e) => h('li', {}, e))) : h('div', { style: 'color:var(--ok);margin-bottom:8px' }, 'Hợp lệ.')); } catch (e) { fail(e); }
+      } }, 'Kiểm tra'),
+      h('button', { class: 'btn p', onclick: async () => { if (await save(ta.value, errBox)) loadConfig().catch(fail); } }, 'Lưu')], () => go({ v: 'settings' }));
+    fill(view, h('div', { class: 'page' }, h('p', { class: 'muted', style: 'margin-top:0' }, 'Chỉ lưu khi bước kiểm tra cấu hình của beckon đạt. beckon áp dụng ngay, không cần khởi động lại.'), errBox, ta));
+    return;
+  }
+  const names = Object.keys(cfg.projects);
+  header('Cài đặt', 'Áp dụng cho mọi project');
+  fill(view, h('div', { class: 'page', style: 'max-width:760px' },
+    group('Truy cập', [f(cfg, 'users', 'Ai được dùng beckon', 'ID thành viên Slack, cách nhau bằng dấu phẩy', 'list', { mono: true })]),
+    names.length > 1 ? group('Project', [f(cfg, 'defaultProject', 'Project mặc định', 'cho tin nhắn riêng (DM)', 'select', { options: names, blank: '(không)' })]) : null,
+    group('Giới hạn', [
+      f(cfg, 'maxParallel', 'Số việc chạy cùng lúc', null, 'number', { placeholder: '3' }),
+      f(cfg, 'maxHandoffs', 'Lượt agent chuyển việc liên tiếp', 'khi không có tin của người', 'number', { placeholder: '3' }),
+      f(cfg, 'approvalTimeoutMinutes', 'Chờ duyệt tối đa', 'phút', 'number', { placeholder: '60' }),
+      f(cfg, 'keepDays', 'Giữ worktree rảnh', 'ngày', 'number', { placeholder: '7' }),
+      f(cfg, 'shutdownGraceMinutes', 'Chờ khi khởi động lại', 'phút, để việc đang chạy làm xong', 'number', { placeholder: '30' })]),
+    group('Secret relay', [f(cfg, 'secretRelay', 'Cấu hình', 'JSON', 'json', { rows: 4 })]),
+    group('File cấu hình', [row('config.json', h('span', { class: 'sel' }, cfgPath), h('button', { class: 'btn', onclick: () => go({ v: 'settings', raw: true }) }, icon('code'), 'Sửa trực tiếp'))])));
 }
 
-nav();
-go(tab);
+// ---- log ----
+async function log(my) {
+  const o = await freshOv();
+  if (my !== seq) return;
+  const stick = !view.querySelector('pre.log') || view.scrollTop + view.clientHeight >= view.scrollHeight - 30;
+  header('Log', h('span', { class: 'sel' }, o.home + '/logs/beckon.log · 80 dòng cuối'));
+  fill(view, h('div', { class: 'page', style: 'max-width:none' }, h('pre', { class: 'log' }, o.log || '(log trống)')));
+  if (stick) view.scrollTop = view.scrollHeight;
+}
+
+refreshOv().then(() => render()).catch(fail);
 </script>
 </body>
 </html>

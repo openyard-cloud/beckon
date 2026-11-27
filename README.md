@@ -413,13 +413,19 @@ On macOS it is a **menu bar app**. Its icon in the top bar shows how many runs a
 - today's runs and tokens, and the memory and CPU of beckon and its runs;
 - **Open beckon…** (the full window), **Restart beckon**, and **Open the log**.
 
-The window has the full UI:
+The window has the full UI, with a sidebar like a Mac app's (its text is in Vietnamese):
 
-- **Overview:** whether beckon is running, the Slack and secret relay connections, config status, memory and CPU of beckon and its runs, the log, and a Restart button.
-- **Projects:** edit projects, schedules, alert watches and settings.
-- **Runs:** every thread, whether it is running, and its tokens.
+- **Overview:** whether beckon is running, the Slack and secret relay connections, config status, memory and CPU, a card per project with its agents, what is running now, and a Restart button.
+- **Each project**, with four tabs:
+  - **Agents:** a card per agent (its colour and label as in Slack, lead and default, how it posts in Slack, idle or working), what is running in the project and its recent runs. Click an agent to edit it, or add one.
+  - **Runs:** every thread of the project, whether it is running, and its tokens.
+  - **Schedules and watches** of the project.
+  - **Settings:** folder, channels, lead and default agent, model, permission mode, instructions, and removing the project.
 - **Usage:** tokens per day, per model and per project, and the largest runs.
-- **Config file:** the raw JSON.
+- **Settings:** who may use beckon, limits, the secret relay, and the raw `config.json`.
+- **Log:** the end of beckon's log.
+
+Add a project with the `+` next to Projects in the sidebar. Edits show a bar with Save and Discard; nothing changes until you save.
 
 It is one binary of about 1.2 MB with no runtime. The menu bar app uses about 15 MB of memory and about 0.1% of one CPU core: a refresh every 15 seconds costs about 12 ms. The window is a WebKit view that exists only while it is open; closing it gives the memory back. The app reads `~/.beckon` and Claude Code's transcripts. It writes only `config.json`, and only after beckon's own config check passes; beckon then applies the change without a restart. It works while beckon is stopped.
 

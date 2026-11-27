@@ -530,6 +530,7 @@ fn project_list(cfg: &Value, runs: &[Value], env: &std::collections::HashSet<Str
                                 json!({
                                     "name": key,
                                     "agent": a["agent"].as_str().unwrap_or(key),
+                                    "app": app,
                                     "description": a["description"],
                                     "slack": slack,
                                     "appMissing": app.as_deref().is_some_and(|x| x != "MAIN" && !env.contains(&format!("SLACK_BOT_TOKEN_{x}"))),
