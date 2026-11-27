@@ -3,6 +3,9 @@ import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { RULE_IDS } from './policy.mjs';
 
+// A function name a SELECT may call, with or without its schema.
+const SQL_NAME = /^[A-Za-z_][\w$]*(\.[A-Za-z_][\w$]*)?$/;
+
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions', 'dontAsk'];
 
 export function beckonHome(env = process.env) {
@@ -117,6 +120,10 @@ export function validateConfig(raw) {
         }
       }
       // Rules from the default list this project runs without asking, by id (src/policy.mjs).
+      const sqlReadFunctions = p.sqlReadFunctions ?? [];
+      if (!isStringArray(sqlReadFunctions) || sqlReadFunctions.some((f) => !SQL_NAME.test(f))) {
+        errors.push(`${at}.sqlReadFunctions: a list of SQL function names, like "public.is_test_account"`);
+      }
       const autoAllow = p.autoAllow ?? [];
       if (!isStringArray(autoAllow) || autoAllow.some((id) => !RULE_IDS.includes(id))) {
         errors.push(`${at}.autoAllow: a list of rule ids, from ${RULE_IDS.join(', ')}`);
@@ -138,6 +145,7 @@ export function validateConfig(raw) {
         permissionMode,
         alwaysAsk: rules,
         autoAllow: isStringArray(autoAllow) ? autoAllow.filter((id) => RULE_IDS.includes(id)) : [],
+        sqlReadFunctions: isStringArray(sqlReadFunctions) ? sqlReadFunctions.filter((f) => SQL_NAME.test(f)) : [],
         setup: p.setup ?? null,
         instructions: p.instructions ?? null,
         mcpConfig: typeof p.mcpConfig === 'string' ? expandHome(p.mcpConfig) : null,

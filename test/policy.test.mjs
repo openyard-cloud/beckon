@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchRule, outsideArea, RULE_IDS } from '../src/policy.mjs';
+import { matchRule, outsideArea, RULE_IDS, readOnlySql } from '../src/policy.mjs';
 
 test('paths outside the project are found in commands and file tools', () => {
   const scope = {
@@ -210,4 +210,21 @@ test('project rules add to the defaults', () => {
   assert.equal(bash('pnpm exec playwright test'), null);
   const writeRule = [{ tool: '^(Edit|Write)$', match: 'migrations/', label: 'migration file' }];
   assert.ok(matchRule('Write', { file_path: 'db/migrations/1.sql' }, writeRule));
+});
+
+test('a SELECT calling a function the project vouches for is a read', () => {
+  const q = "select count(*) from events e where not public.is_test_account(e.organizer_id) and created_at >= now() - interval '7 days'";
+  const tool = 'mcp__claude_ai_Supabase__execute_sql';
+  assert.equal(readOnlySql(q), false, 'unknown functions ask');
+  assert.equal(readOnlySql(q, ['public.is_test_account']), true);
+  assert.equal(readOnlySql(q, ['PUBLIC.IS_TEST_ACCOUNT']), true, 'names are not case sensitive');
+  assert.equal(readOnlySql("select public.is_test_account(id), public.reset_all() from x", ['public.is_test_account']), false, 'other functions still ask');
+  assert.equal(readOnlySql("delete from x where public.is_test_account(id)", ['public.is_test_account']), false);
+  assert.equal(readOnlySql('select count(*) from p where not is_test_account(p.id)', ['public.is_test_account']), true, 'public functions also without the schema');
+  assert.equal(readOnlySql('select round(acos(least(1, cos(radians(10)) * sin(radians(20))))::numeric, 1), percentile_cont(0.5) within group (order by x) from t'), true, 'math and within group');
+  assert.equal(readOnlySql("select pg_get_functiondef(p.oid) from pg_proc p where p.proname = 'x'"), true);
+  assert.ok(matchRule(tool, { query: q }));
+  assert.equal(matchRule(tool, { query: q }, [], [], ['public.is_test_account']), null);
+  // A project rule for every Supabase tool still lets reads through.
+  assert.equal(matchRule(tool, { query: q }, [{ tool: '^mcp__.*supabase', match: null, label: 'Supabase' }], [], ['public.is_test_account']), null);
 });
