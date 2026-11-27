@@ -268,6 +268,8 @@ impl App {
                 let sub = sys::tree(&all, p.pid);
                 runs.push(json!({
                     "project": t["project"], "agent": t["agent"], "title": t["title"], "pid": p.pid,
+                    // team members working inside this run (subagents of the lead, beckon's records)
+                    "members": t["team"].as_array().map(|a| a.iter().filter(|m| m["status"] == "working").filter_map(|m| m["agent"].as_str()).collect::<Vec<_>>()).unwrap_or_default(),
                     "rssKb": sub.iter().map(|x| x.rss_kb).sum::<u64>(),
                     "cpu": sub.iter().map(|x| x.cpu).sum::<f64>(),
                     "secs": sys::etime_secs(&p.etime),
@@ -506,7 +508,12 @@ fn project_list(cfg: &Value, runs: &[Value]) -> Value {
         projects
             .iter()
             .map(|(name, p)| {
-                let running_of = |agent: Option<&str>| runs.iter().filter(|r| r["project"].as_str() == Some(name) && (agent.is_none() || r["agent"].as_str() == agent)).count();
+                let running_of = |agent: Option<&str>| {
+                    runs.iter()
+                        .filter(|r| r["project"].as_str() == Some(name))
+                        .filter(|r| agent.is_none() || r["agent"].as_str() == agent || r["members"].as_array().is_some_and(|m| m.iter().any(|x| x.as_str() == agent)))
+                        .count()
+                };
                 let agents: Vec<Value> = p["agents"]
                     .as_object()
                     .map(|o| {

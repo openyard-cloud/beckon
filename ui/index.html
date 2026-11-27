@@ -428,7 +428,7 @@ function runRows(runs, withProject) {
     const a = agentOf(r.project, r.agent);
     return h('div', { class: 'r' + (withProject ? ' click' : ''), onclick: withProject ? () => go({ v: 'project', p: r.project }) : null },
       a ? avatar(a, '', true) : h('div', { class: 'av g' }, icon('chat')),
-      h('div', { class: 'main' }, h('div', { title: r.title }, r.title), h('div', { class: 'meta' }, [withProject ? r.project : null, r.agent, 'pid ' + r.pid].filter(Boolean).join(' · '))),
+      h('div', { class: 'main' }, h('div', { title: r.title }, r.title), h('div', { class: 'meta' }, [withProject ? r.project : null, r.agent, r.members?.length ? 'đội: ' + [...new Set(r.members)].join(', ') : null, 'pid ' + r.pid].filter(Boolean).join(' · '))),
       h('div', { class: 'n', title: 'thời gian chạy' }, h('b', {}, short(r.secs))), h('div', { class: 'n opt', title: 'bộ nhớ' }, mb(r.rssKb)), h('div', { class: 'n opt', title: 'CPU' }, r.cpu.toFixed(1) + '%'));
   }));
 }
