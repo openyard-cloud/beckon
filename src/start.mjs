@@ -44,6 +44,7 @@ export async function start(env = process.env) {
     configFile: paths.config,
     secrets: secretSetup?.broker ?? null,
     secretScript: fileURLToPath(new URL('../bin/beckon-secret.mjs', import.meta.url)),
+    attachScript: fileURLToPath(new URL('../bin/beckon-attach.mjs', import.meta.url)),
   });
   beckon.configText = readFileSync(paths.config, 'utf8');
   const hook = await startHookServer((body) => beckon.onHook(body), { log });

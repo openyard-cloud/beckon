@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { openAsBlob } from 'node:fs';
 
 const API = 'https://slack.com/api/';
 
@@ -52,6 +53,22 @@ export class SlackApi {
       throw new SlackError(method, data.error ?? 'unknown_error', detail);
     }
     return data;
+  }
+
+  // Uploads a file from this machine into a thread: ask Slack where to send the bytes, send
+  // them, then share the file in the channel. Needs the files:write scope.
+  async upload({ channel, threadTs, path, filename, title, comment }) {
+    const blob = await openAsBlob(path);
+    const { upload_url: url, file_id: id } = await this.call('files.getUploadURLExternal', { filename, length: blob.size });
+    const res = await this.fetch(url, { method: 'POST', body: blob });
+    if (!res.ok) throw new SlackError('file upload', `http_${res.status}`);
+    await this.call('files.completeUploadExternal', {
+      files: [{ id, title: title || filename }],
+      channel_id: channel,
+      thread_ts: threadTs,
+      initial_comment: comment || undefined,
+    });
+    return { id };
   }
 }
 

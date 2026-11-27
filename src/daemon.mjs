@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { join, isAbsolute, dirname, resolve } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { checkAttachment, inTempFolder } from './attach.mjs';
 import { homedir } from 'node:os';
 import { Progress } from './progress.mjs';
 import { TabTracker } from './tabs.mjs';
@@ -145,8 +146,9 @@ export class Beckon {
     configFile = null,
     secrets = null,
     secretScript = null,
+    attachScript = null,
   }) {
-    Object.assign(this, { config, slack, state, worktreesDir, nodePath, hookScript, env, log, runClaude, ensureWorktree, removeWorktree, runSetup, now, configFile, secrets, secretScript });
+    Object.assign(this, { config, slack, state, worktreesDir, nodePath, hookScript, env, log, runClaude, ensureWorktree, removeWorktree, runSetup, now, configFile, secrets, secretScript, attachScript });
     this.configText = null;
     this.hook = null;
     this.botUserId = null;
@@ -845,10 +847,13 @@ export class Beckon {
       `- Stay inside the "${project.name}" project: look for answers in this worktree, the project's own notes and its connected services, never in other folders on this machine (other repositories, beckon or its settings). When people say "our site", "our app" or "the tool for this", they mean ${project.name}'s. If what they ask for is not in the project, say so and ask; reading outside it waits for the person's Allow button.`,
       '- Do the work yourself, all the way. Never hand the user a command to run, a button to click or a step to do by hand, not even as an alternative or a fallback: run it. This includes builds, releases, deploys, migrations and pushes, even where the repository notes say the owner usually does them by hand.',
       '- Close every browser tab or window you opened as soon as you are done with it, and always before your final message, also when the task failed. Prefer ways that open nothing: curl, gh and other CLIs, or headless Playwright, to read pages; Claude in Chrome tabs (closed with tabs_close) when those tools are available. Avoid `open <url>`; if you used it, close that tab afterwards (on macOS, with osascript, matching the exact URL you opened). Close headed browsers you launched. Never close tabs you did not open.',
-      '- People read your messages in Slack and cannot open files on this machine. Never point them to a file outside the repository (screenshots, logs, scripts, saved pages, /tmp paths): say what it shows instead. Delete the files you made only to check something before your final message. Share a file only when someone asks for it, and the way they ask (for example uploaded to Google Drive).',
+      '- People read your messages in Slack and cannot open files on this machine. Never point them to a file outside the repository (screenshots, logs, scripts, saved pages, /tmp paths): say what it shows instead. Delete the files you made only to check something before your final message. Share a file only when someone asks for it, and the way they ask.',
       '- Keep your context small: everything in it is read again at every step. Find code with grep -n and read only the lines you need (Read with offset and limit), not whole large files; keep command output short (head, tail, quiet flags). Hand a search that reads many files or pages to a subagent (the Agent tool, Explore for code) and keep only its conclusion. On screen, read the text or element tree first, and take a screenshot only when you need to see something, of that window or area rather than the whole screen.',
       '- You do not need to hold back risky steps: beckon sends deploys, releases, pushes to main branches, merges, migrations, publishing and similar actions to the user as an Allow button the moment you run them, and that button is the user\'s decision. The button also stands for notes in the repository or memory that say to get the owner\'s OK first (before tests against production, a release, a migration): run the step and let the button ask, instead of ending the turn to ask in text. If one is denied, do not reach the same result another way; say what is left undone. If the approval itself fails (for example beckon is not reachable), run the same command again once; if it fails again, stop and say so, and the user will reply to continue.',
     ];
+    if (this.attachScript) {
+      lines.push(`- When someone asks to see a screenshot, a screen recording (for example a video of a feature being tested) or a PDF, send the file to this Slack thread: "${this.nodePath}" "${this.attachScript}" <file> --title "Checkout on iPhone 15" (images, videos and PDFs up to 1 GB; add --comment "..." for a line above it). Save such files in $TMPDIR: beckon deletes them there once they are in Slack. If someone asks for another place (for example Google Drive), use that instead.`);
+    }
     if (this.secrets && this.secretScript) {
       const run = `"${this.nodePath}" "${this.secretScript}"`;
       lines.push(`- Never type a password or one-time code yourself, and never ask for one in Slack. To fill one, first click the field so it has focus, then run: ${run} --label "Apple ID password" --kind password --app "Google Chrome" --domain apple.com (kind: password for a password field; otp for a one-time code or PIN, including one split into a box per digit, where you click the first box; text otherwise; --domain is the site, required for web pages). It waits while the person enters the value on their phone, then prints the result: filled, refused (with the reason, for example the focus moved), cancelled or expired. You never see the value. Keep that field focused and the page open until it is done.`);
@@ -862,7 +867,7 @@ export class Beckon {
       if (project.lead && others.length) {
         if (agent.name === project.lead) {
           const team = others.map((n) => `${n} (subagent_type "${project.agents[n].agent}"${project.agents[n].description ? `: ${project.agents[n].description}` : ''})`).join(', ');
-          lines.push(`- You lead this project's team: ${team}. A person gives you the work; you plan it and get it done through the team, without asking the person to pass anything on. First decide who the work really needs: only the members whose role it calls for (often one or two; a question you can answer yourself needs nobody), never everyone by default. Then decide what runs at the same time: tasks that do not depend on each other and do not edit the same files run together; the rest in order. Before you start anyone, write that plan in one or two lines (who, together or in order, and why). Give each task to a member with the Agent tool and its subagent_type, with everything it needs in the prompt: the request, the spec or files, what to do and what to report (and that risky actions wait for the person's Allow button in Slack, which is normal; that its report comes back to you, and names no screenshots or temporary files, which nobody can open, and that it deletes the ones it made only for checking). Start tasks that do not depend on each other in the same message, so they run at the same time; they share this worktree, so never run two at once that edit the same files, and start a task that needs another's result (testing after the code) once that result is in. Only your own messages reach Slack: the person sees each member's line on your progress card while it works, and its full report in beckon desktop. So your final report carries what matters from each member's report. Check the reports, give out what comes next (the fixes for what testing found, then testing again), and when the work is done and checked, write the final report for the person, with a line on who worked on it. Do your own part (understanding the request, specs, decisions, numbers) yourself, and leave code, design and testing to the team. Ask the person only for decisions that are really theirs: then end the turn with the question.`);
+          lines.push(`- You lead this project's team: ${team}. A person gives you the work; you plan it and get it done through the team, without asking the person to pass anything on. First decide who the work really needs: only the members whose role it calls for (often one or two; a question you can answer yourself needs nobody), never everyone by default. Then decide what runs at the same time: tasks that do not depend on each other and do not edit the same files run together; the rest in order. Before you start anyone, write that plan in one or two lines (who, together or in order, and why). Give each task to a member with the Agent tool and its subagent_type, with everything it needs in the prompt: the request, the spec or files, what to do and what to report (and that risky actions wait for the person's Allow button in Slack, which is normal; that its report comes back to you, and names no screenshots or temporary files, which nobody can open, and that it deletes the ones it made only for checking; when the person asked to see a screenshot or recording, give the member the beckon-attach command to send it to the thread). Start tasks that do not depend on each other in the same message, so they run at the same time; they share this worktree, so never run two at once that edit the same files, and start a task that needs another's result (testing after the code) once that result is in. Only your own messages reach Slack: the person sees each member's line on your progress card while it works, and its full report in beckon desktop. So your final report carries what matters from each member's report. Check the reports, give out what comes next (the fixes for what testing found, then testing again), and when the work is done and checked, write the final report for the person, with a line on who worked on it. Do your own part (understanding the request, specs, decisions, numbers) yourself, and leave code, design and testing to the team. Ask the person only for decisions that are really theirs: then end the turn with the question.`);
         } else if (String(user).startsWith('agent:')) {
           lines.push(`- You are on a team led by @${project.lead}, which gave you this task (above). Do it fully, then report what you did, what you found and what is left. Do not tag other agents: @${project.lead} reads your report and decides what comes next. If something needs a decision only a person can make, say so in your report.`);
         } else {
@@ -1314,6 +1319,7 @@ export class Beckon {
     const skills = Object.values(project.agents ?? {}).flatMap((a) => a.skills ?? []).filter(isAbsolute);
     const allowed = [project.path, t.worktree, ...skills, ...(t.outsideAllowed ?? [])].map((p) => resolve(p));
     if (this.secretScript) allowed.push(this.secretScript);
+    if (this.attachScript) allowed.push(this.attachScript);
     return { home, guarded, allowed };
   }
 
@@ -1339,6 +1345,7 @@ export class Beckon {
       return res;
     }
     if (kind === 'secret') return this.onSecret(key, t, run, payload);
+    if (kind === 'attach') return this.onAttach(t, payload);
     if (kind === 'permission') {
       if (t.allowAll) return { decision: 'allow' };
       return this.ask(key, t, run, tool, input, 'needs your permission', true);
@@ -1356,6 +1363,32 @@ export class Beckon {
       decision: 'block',
       message: `Before finishing, close the browser tabs you opened in this run (tabId ${open.join(', ')}) with the Claude in Chrome tabs_close tool. Leave tabs you did not open alone.`,
     };
+  }
+
+  // Claude sends a screenshot, a recording or a PDF to the thread (bin/beckon-attach.mjs). Only
+  // files that are really images, videos or PDFs go; one in a temporary folder is deleted after.
+  async onAttach(t, payload) {
+    if (!this.attachScript || typeof this.slack.upload !== 'function') return { status: 'unavailable', reason: 'this beckon cannot upload files' };
+    if (typeof payload?.path !== 'string' || !isAbsolute(payload.path)) return { status: 'invalid', reason: 'give the path of the file' };
+    const file = checkAttachment(payload.path);
+    if (file.reason) return { status: 'refused', reason: file.reason };
+    const text = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
+    try {
+      await this.slack.upload({ channel: t.channel, threadTs: t.threadTs, path: file.path, filename: file.name, title: text(payload.title, 250), comment: text(payload.comment, 3000) });
+    } catch (e) {
+      this.log(`Upload of ${file.name} failed: ${e.message}`);
+      const reason = e.code === 'missing_scope'
+        ? 'the beckon Slack app cannot upload files yet (it needs the files:write scope). Say in your final message that the file could not be sent and why; do not send it another way unless asked.'
+        : e.message;
+      return { status: 'failed', reason };
+    }
+    let removed = false;
+    if (inTempFolder(file.path)) {
+      try { rmSync(file.path); removed = true; } catch { /* already gone */ }
+    }
+    (t.attachments ??= []).push({ name: file.name, kind: file.kind, size: file.size, at: this.now() });
+    this.state.save();
+    return { status: 'uploaded', file: file.name, note: removed ? 'It is in the thread now, and the copy on this machine was deleted.' : 'It is in the thread now. Delete the file if you made it only for this.' };
   }
 
   // Claude asks for a password or one-time code (bin/beckon-secret.mjs). The link to the form goes

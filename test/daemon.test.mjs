@@ -904,3 +904,44 @@ test('the lead runs its team as subagents: Slack shows only the lead, members ar
     await close();
   }
 });
+
+test('beckon-attach sends images, videos and PDFs to the thread and deletes them from a temp folder', async () => {
+  const { beckon, slack, claudeRuns, done, close } = await setup({
+    beckonOptions: { attachScript: fileURLToPath(new URL('../bin/beckon-attach.mjs', import.meta.url)) },
+  });
+  try {
+    const dir = tempDir('beckon-attach-');
+    const video = join(dir, 'checkout.mp4');
+    writeFileSync(video, Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from('ftypisom'), Buffer.alloc(64)]));
+    await beckon.handleEvent(mention(`ATTACH:${video}`));
+    await done();
+    const [up] = slack.find('upload');
+    assert.equal(up.body.channel, 'CPROJ');
+    assert.ok(up.body.threadTs);
+    assert.equal(up.body.filename, 'checkout.mp4');
+    assert.equal(up.body.title, 'Test run');
+    assert.match(slack.texts().find((t) => t?.startsWith('attach:')), /"status":"uploaded"/);
+    assert.ok(!existsSync(video), 'the temp copy is deleted');
+    assert.match(claudeRuns().at(-1).argv[claudeRuns().at(-1).argv.indexOf('--append-system-prompt') + 1], /beckon-attach\.mjs/);
+
+    // A settings file renamed to .png is not an image.
+    const fake = join(dir, 'env.png');
+    writeFileSync(fake, 'SLACK_BOT_TOKEN=xoxb-not-a-picture\n');
+    await beckon.handleEvent(mention(`ATTACH:${fake}`));
+    await done();
+    assert.match(slack.texts().filter((t) => t?.startsWith('attach:')).at(-1), /"status":"refused".*not an image/);
+    assert.equal(slack.find('upload').length, 1);
+    assert.ok(existsSync(fake));
+
+    // Without the files:write scope, Claude is told why.
+    slack.uploadError = 'missing_scope';
+    const shot = join(dir, 'shot.png');
+    writeFileSync(shot, Buffer.concat([Buffer.from([0x89]), Buffer.from('PNG\r\n'), Buffer.alloc(32)]));
+    await beckon.handleEvent(mention(`ATTACH:${shot}`));
+    await done();
+    assert.match(slack.texts().filter((t) => t?.startsWith('attach:')).at(-1), /"status":"failed".*files:write/);
+    assert.ok(existsSync(shot), 'a file that did not go is kept');
+  } finally {
+    await close();
+  }
+});
