@@ -903,6 +903,7 @@ export class Beckon {
       '- Do the work yourself, all the way. Never hand the user a command to run, a button to click or a step to do by hand, not even as an alternative or a fallback: run it. This includes builds, releases, deploys, migrations and pushes, even where the repository notes say the owner usually does them by hand.',
       '- Close every browser tab or window you opened as soon as you are done with it, and always before your final message, also when the task failed. Prefer ways that open nothing: curl, gh and other CLIs, or headless Playwright, to read pages; Claude in Chrome tabs (closed with tabs_close) when those tools are available. Avoid `open <url>`; if you used it, close that tab afterwards (on macOS, with osascript, matching the exact URL you opened). Close headed browsers you launched. Never close tabs you did not open.',
       '- People read your messages in Slack and cannot open files on this machine. Never point them to a file outside the repository (screenshots, logs, scripts, saved pages, /tmp paths): say what it shows instead. Delete the files you made only to check something before your final message. Share a file only when someone asks for it, and the way they ask (for example uploaded to Google Drive).',
+      '- Keep your context small: everything in it is read again at every step. Find code with grep -n and read only the lines you need (Read with offset and limit), not whole large files; keep command output short (head, tail, quiet flags). Hand a search that reads many files or pages to a subagent (the Agent tool, Explore for code) and keep only its conclusion. On screen, read the text or element tree first, and take a screenshot only when you need to see something, of that window or area rather than the whole screen.',
       '- You do not need to hold back risky steps: beckon sends deploys, releases, pushes to main branches, merges, migrations, publishing and similar actions to the user as an Allow button the moment you run them, and that button is the user\'s decision. The button also stands for notes in the repository or memory that say to get the owner\'s OK first (before tests against production, a release, a migration): run the step and let the button ask, instead of ending the turn to ask in text. If one is denied, do not reach the same result another way; say what is left undone. If the approval itself fails (for example beckon is not reachable), run the same command again once; if it fails again, stop and say so, and the user will reply to continue.',
     ];
     if (this.secrets && this.secretScript) {
@@ -1032,6 +1033,7 @@ export class Beckon {
       nodePath: this.nodePath,
       hookScript: this.hookScript,
       timeoutSeconds: this.config.approvalTimeoutMinutes * 60 + 60,
+      contextWindow: this.config.contextWindow,
     });
     const agent = this.agentOf(t, project);
     const pluginDirs = [];
