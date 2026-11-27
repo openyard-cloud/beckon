@@ -81,7 +81,15 @@ Mention `@beckon` with a task. It starts Claude Code in a fresh git worktree of 
 
 Each task runs in its own worktree under `~/.beckon/worktrees`, created from the latest remote copy of the base branch on a detached HEAD. Claude creates a branch with your repository's naming conventions, so several tasks on one repository never collide. A worktree that has been idle for `keepDays` is removed, but only if that loses nothing: uncommitted changes and commits that are not on any branch keep it alive.
 
-Claude closes the browser tabs it opened before it finishes. Tabs opened with Claude in Chrome are tracked, and a run that tries to end with some still open is sent back to close them (twice at most). It also deletes the files it made only to check something (screenshots, scripts, logs) and does not point you to files on the machine, which you cannot open from Slack; ask if you want one shared, for example on Google Drive.
+Claude closes the browser tabs it opened before it finishes. Tabs opened with Claude in Chrome are tracked, and a run that tries to end with some still open is sent back to close them (twice at most). It also deletes the files it made only to check something (screenshots, scripts, logs) and does not point you to files on the machine, which you cannot open from Slack; ask if you want one shared.
+
+**Screenshots and recordings.** Ask to see one ("quay video test checkout gửi lên đây") and Claude sends it to the thread with `beckon-attach`:
+
+```sh
+beckon-attach $TMPDIR/checkout.mp4 --title "Checkout on iPhone 15" --comment "Pay button works again"
+```
+
+Only images, videos and PDFs go (up to 1 GB), checked by their content rather than their name, so a settings or key file cannot be sent by renaming it. A file in a temporary folder is deleted once it is in Slack. In a team, the lead hands the command to the member doing the recording. This needs the `files:write` scope: apps made from an older manifest add it under *OAuth & Permissions > Bot Token Scopes* and reinstall the app. Until then Claude says the file could not be sent. Ask for another place ("upload to Google Drive") and it goes there instead.
 
 ### Which project a message goes to
 
@@ -448,6 +456,7 @@ Every API call needs the token in `~/.beckon/ui-token`. The menu bar app serves 
 
 - **Only listed members.** Anyone not in `users` is ignored, and only listed members can press the buttons. A Slack message is still an instruction to an agent with your access, so keep beckon's channels to people you trust.
 - **Secrets.** Passwords and one-time codes go end to end from your phone to the field through the [secret handoff](#passwords-codes-and-other-secrets-optional), never through Claude or Slack. API keys and other values a command needs go end to end to that one command, [used once and wiped](#secrets-for-a-command). Screen control refuses to type into password fields.
+- **Files sent to Slack.** `beckon-attach` uploads only images, videos and PDFs, told apart by their first bytes, and only into the thread of the run that sent them.
 - **Approval guards.** The approval hook fails closed. If the beckon process is unreachable, the action is denied.
 - **What the rules match.** Always-asked rules match command text, which catches routine mistakes but is not a sandbox. Give the host's CLIs only the access you would give the agent, and protect `main` with branch protection as well.
 - **Tokens.** `~/.beckon/env` holds your Slack tokens. `beckon init` creates it with mode 600, and `beckon doctor` fixes the mode if it drifts.

@@ -9,6 +9,7 @@
 //   SLEEP           wait until killed
 //   TABS            open a browser tab, then close it only when the Stop hook asks
 //   SECRET          ask beckon for a password with bin/beckon-secret.mjs and report the result
+//   ATTACH:<file>   send a file to the thread with bin/beckon-attach.mjs and report the result
 //   SECRETRUN       ask beckon for a value for a command (--file --run) and report its output
 //   SUBAGENTS       as the lead: start dev and qa as subagents, then report
 //   TEAMPLAN        as pm: assign dev and qa; once they have finished, report
@@ -78,6 +79,13 @@ if (run || perm) {
     }
   }
   emit({ type: 'result', subtype: 'success', is_error: false, result: verdict === 'ran' ? `ran ${command}` : `denied: ${reason}`, num_turns: 2 });
+} else if (prompt.includes('ATTACH:')) {
+  const { spawnSync } = await import('node:child_process');
+  const script = new URL('../../bin/beckon-attach.mjs', import.meta.url).pathname;
+  const file = prompt.split('ATTACH:')[1].trim().split(/\s+/)[0];
+  emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'a1', name: 'Bash', input: { command: `node ${script} ${file}` } }] } });
+  const r = spawnSync(process.execPath, [script, file, '--title', 'Test run'], { encoding: 'utf8', env: process.env });
+  emit({ type: 'result', subtype: 'success', is_error: false, result: `attach: ${r.stdout.trim()}`, num_turns: 2 });
 } else if (prompt.includes('SECRETRUN')) {
   const { spawnSync } = await import('node:child_process');
   const script = new URL('../../bin/beckon-secret.mjs', import.meta.url).pathname;

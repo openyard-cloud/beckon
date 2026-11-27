@@ -29,6 +29,12 @@ export class FakeSlack {
     return { ok: true };
   }
 
+  async upload(args) {
+    this.calls.push({ method: 'upload', body: args });
+    if (this.uploadError) throw Object.assign(new Error(`Slack files.getUploadURLExternal failed: ${this.uploadError}`), { code: this.uploadError });
+    return { id: 'F1' };
+  }
+
   posts() {
     return this.calls.filter((c) => c.method === 'chat.postMessage').map((c) => c.body);
   }
