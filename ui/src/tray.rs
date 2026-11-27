@@ -9,13 +9,14 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use tao::dpi::LogicalSize;
+use tao::dpi::{LogicalPosition, LogicalSize};
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopWindowTarget};
-use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS, EventLoopWindowTargetExtMacOS};
+use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS, EventLoopWindowTargetExtMacOS, WindowBuilderExtMacOS};
 use tao::window::{Window, WindowBuilder};
 use tiny_http::Server;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
@@ -72,7 +73,7 @@ pub fn run(home: PathBuf, token: String) {
     let origin = format!("http://127.0.0.1:{port}/");
     let mut bar = Bar::new(App::new(home, token));
     let mut tray: Option<TrayIcon> = None;
-    let mut window: Option<(Window, WebView)> = None;
+    let mut window: Option<(Rc<Window>, WebView)> = None;
     let mut next = Instant::now();
 
     event_loop.run(move |event, target, flow| {
@@ -130,17 +131,42 @@ pub fn run(home: PathBuf, token: String) {
     });
 }
 
-fn show(window: &mut Option<(Window, WebView)>, target: &EventLoopWindowTarget<UserEvent>, url: &str, origin: &str) {
+fn show(window: &mut Option<(Rc<Window>, WebView)>, target: &EventLoopWindowTarget<UserEvent>, url: &str, origin: &str) {
     // While the window is open the app has a Dock icon and a menu bar, like any app.
     target.set_activation_policy_at_runtime(ActivationPolicy::Regular);
     if let Some((w, _)) = window {
         w.set_focus();
         return;
     }
-    let Ok(w) = WindowBuilder::new().with_title("beckon").with_inner_size(LogicalSize::new(1120.0, 780.0)).build(target) else { return };
+    // A Mac window without a title bar: the page draws its sidebar under the traffic lights, and
+    // its top strip moves the window (the page asks with an IPC message on mouse down).
+    let Ok(w) = WindowBuilder::new()
+        .with_title("beckon")
+        .with_inner_size(LogicalSize::new(1120.0, 780.0))
+        .with_min_inner_size(LogicalSize::new(780.0, 480.0))
+        .with_titlebar_transparent(true)
+        .with_title_hidden(true)
+        .with_fullsize_content_view(true)
+        .with_traffic_light_inset(LogicalPosition::new(18.0, 20.0))
+        .build(target)
+    else {
+        return;
+    };
+    let w = Rc::new(w);
+    let weak = Rc::downgrade(&w);
     let allowed = origin.to_string();
     let view = WebViewBuilder::new()
         .with_url(url)
+        .with_ipc_handler(move |req| {
+            let Some(w) = weak.upgrade() else { return };
+            match req.body().as_str() {
+                "drag" => {
+                    let _ = w.drag_window();
+                }
+                "zoom" => w.set_maximized(!w.is_maximized()),
+                _ => {}
+            }
+        })
         .with_navigation_handler(move |to| {
             if to.starts_with(&allowed) || to == "about:blank" {
                 return true;
