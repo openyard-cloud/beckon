@@ -1069,13 +1069,14 @@ export class Beckon {
       signal: run.abort.signal,
       onInput: (send) => { run.send = send; },
       onEvent: (e) => {
-        // An answer to a message sent during the run, while subagents still work: post it now,
-        // unless the run ends in the next seconds and posts it as its reply anyway.
+        // An answer to a message sent during the run, while subagents or a background command
+        // still work: post it now, unless the run ends in the next seconds and posts it as its
+        // reply anyway. A run waiting for a button or a secret is still running.
         if (e.type === 'result' && e.result && run.heard) {
           run.heard = false;
           const answer = this.linkAgents(e.result.trim(), project);
           setTimeout(() => {
-            if (this.running.get(key) !== run || run.status !== 'working') return;
+            if (this.running.get(key) !== run || !['working', 'waiting'].includes(run.status)) return;
             for (const piece of chunkMarkdown(answer)) {
               this.post(t.channel, t.threadTs, oneLine(piece, 300), [{ type: 'markdown', text: piece }], agent).catch(() => {});
             }
