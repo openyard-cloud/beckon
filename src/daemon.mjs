@@ -313,7 +313,7 @@ export class Beckon {
     const body = { channel, text, unfurl_links: false, unfurl_media: false };
     if (threadTs) body.thread_ts = threadTs;
     if (blocks) body.blocks = blocks;
-    if (as && !this.noAgentIdentity) {
+    if (as && !as.lead && !this.noAgentIdentity) {
       body.username = as.displayName;
       if (as.icon.startsWith(':')) body.icon_emoji = as.icon;
       else body.icon_url = as.icon;
@@ -1214,7 +1214,7 @@ export class Beckon {
     const t = this.state.threads[key];
     const agent = this.agentOf(t, this.config.projects[t?.project]);
     // Shown only when the message does not already carry the agent's name.
-    const named = agent && !this.noAgentIdentity;
+    const named = agent && !agent.lead && !this.noAgentIdentity;
     return agent && !named ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `*${agent.name}* agent` }] }] : [];
   }
 

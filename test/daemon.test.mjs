@@ -885,6 +885,8 @@ test('the lead runs its team as subagents: Slack shows only the lead, members ar
     assert.ok(!JSON.stringify(slack.posts().map((p) => p.blocks)).includes('3 of 3 pass\\nlogin ok'), 'no member report in full');
     const report = slack.posts().find((p) => /Team done/.test(p.text));
     assert.match(report.text, /^<@U1> Team done/, 'the lead\'s report mentions the person who asked');
+    assert.equal(report.username, undefined, 'the lead posts as beckon itself');
+    assert.match(JSON.stringify(report.blocks), /\*pm\* agent/, 'with its name above the answer');
     const card = JSON.stringify(report.blocks);
     assert.match(card, /dev: Build the page/, 'each member is a line on the card');
     assert.match(card, /Built the page in PR #7/, 'ticked off with its report\'s first line');
