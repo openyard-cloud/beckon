@@ -208,7 +208,7 @@ Three kinds of requests come to Slack:
    - MCP connector tools that deploy, migrate, delete, merge, publish or send messages;
    - clicks on consequential buttons on screen (Submit, Upload, Distribute, Release, Delete, ...), when screen control is set up (see below).
 
-   The full list is in [`src/policy.mjs`](src/policy.mjs). Add your own per project with `alwaysAsk`. Let a project run some of these without asking with `autoAllow` and the rules' ids: `push-main`, `merge`, `github`, `deploy`, `release`, `publish`, `infra`, `database`, `root-delete`, `connector`, `screen-click`, `screen-agent`, `browser-submit`. For example `"autoAllow": ["merge"]` lets agents merge their pull requests; mind what a merge sets off, such as a deploy on push to main. Reading through a connector never asks, also under your own rules: tools named `get_…`, `list_…`, `search_…` and the like, and `execute_sql` with SQL that only reads. A rule with `"reads": true` asks for those too. Text a command only carries does not count either, for your rules as for these: a deploy command written into a file (`cat > notes.md <<'EOF'`), quoted in a sed script or a PR body, or in a string of a Python script. Text a shell runs still counts (`sh -c '...'`, `ssh host '...'`, `bash <<'EOF'`).
+   The full list is in [`src/policy.mjs`](src/policy.mjs). Add your own per project with `alwaysAsk`. Let a project run some of these without asking with `autoAllow` and the rules' ids: `push-main`, `merge`, `github`, `deploy`, `release`, `publish`, `infra`, `database`, `root-delete`, `connector`, `screen-click`, `screen-agent`, `browser-submit`. For example `"autoAllow": ["merge"]` lets agents merge their pull requests; mind what a merge sets off, such as a deploy on push to main. Reading through a connector never asks, also under your own rules: tools named `get_…`, `list_…`, `search_…` and the like, and `execute_sql` with SQL that only reads. SQL that calls a function counts as a read only when the function is a known read-only built-in (`count`, `now`, `cos`, `pg_get_functiondef`…), since a function of your own could write. List your own read-only helpers per project with `sqlReadFunctions` (for example `["public.is_test_account"]`); check each one only reads, and look again when a migration redefines it. A rule with `"reads": true` asks for those too. Text a command only carries does not count either, for your rules as for these: a deploy command written into a file (`cat > notes.md <<'EOF'`), quoted in a sed script or a PR body, or in a string of a Python script. Text a shell runs still counts (`sh -c '...'`, `ssh host '...'`, `bash <<'EOF'`).
 
 2. **Permission prompts.** These are tool uses your permission mode and allow rules do not already cover. **Allow everything in this thread** stops these prompts for the rest of that thread. Always-asked actions still ask.
 
@@ -365,7 +365,8 @@ Limits:
         "playwright test",                // a regex on Bash commands
         { "tool": "^(Edit|Write)$", "match": "migrations/", "label": "edit a migration" }
       ],
-      "autoAllow": ["merge"]              // optional: default rules that do not ask here, by id
+      "autoAllow": ["merge"],             // optional: default rules that do not ask here, by id
+      "sqlReadFunctions": ["public.is_test_account"] // optional: your SQL functions that only read
     }
   },
   "defaultProject": "myapp",              // for DMs; default: the only project

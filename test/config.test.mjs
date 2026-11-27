@@ -118,3 +118,11 @@ test('a project lead must be one of its agents', () => {
   const bad = validateConfig({ users: ['U1'], projects: { a: { path: '/a', agents: { qa: {} }, lead: 'pm' } } });
   assert.match(bad.errors.join(' '), /a\.lead: "pm" is not one of this project's agents/);
 });
+
+test('sqlReadFunctions takes SQL function names', () => {
+  const ok = validateConfig({ users: ['U1'], projects: { a: { path: '/a', sqlReadFunctions: ['public.is_test_account', 'my_fn'] } } });
+  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(ok.config.projects.a.sqlReadFunctions, ['public.is_test_account', 'my_fn']);
+  const bad = validateConfig({ users: ['U1'], projects: { a: { path: '/a', sqlReadFunctions: ['drop table x; --'] } } });
+  assert.match(bad.errors[0], /sqlReadFunctions/);
+});

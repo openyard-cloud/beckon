@@ -135,24 +135,28 @@ export function readTool(tool) {
 // row locks. Every other writing statement is caught by what it starts with.
 const SQL_WRITE = /\b(insert|update|delete|merge|truncate|drop|alter|create|grant|revoke|into|analy[sz]e)\b|\bfor\s+(no\s+key\s+update|key\s+share|update|share)\b/i;
 // Words that may stand before "(" without being a function call.
-const SQL_PAREN_WORDS = new Set('as in exists any all some over filter within values using on and or not when then else select from join where with by case is row array between like ilike lateral distinct cast extract materialized numeric decimal varchar char character timestamp timestamptz time interval bit varbit float'.split(' '));
+const SQL_PAREN_WORDS = new Set('as in exists any all some over filter within values using on and or not when then else select from join where with by case is row array between like ilike lateral distinct cast extract group materialized numeric decimal varchar char character timestamp timestamptz time interval bit varbit float'.split(' '));
 // Functions that only compute or read: any other call asks, since a user-defined function can write.
 const SQL_READ_FUNCS = new Set(`count sum avg min max coalesce nullif greatest least lower upper initcap length char_length
   octet_length trim btrim ltrim rtrim substring substr left right replace split_part position strpos concat concat_ws format
   regexp_replace regexp_match regexp_matches regexp_split_to_array string_to_array array_to_string array_position array_remove
   array_append array_length array_agg string_agg unnest generate_series cardinality md5 encode decode to_char to_date
   to_timestamp to_number date_trunc date_part date_bin age now make_interval timezone round floor ceil ceiling abs mod power
-  sqrt trunc sign json_agg jsonb_agg json_object_agg jsonb_object_agg json_build_object jsonb_build_object json_build_array
+  sqrt cbrt exp ln log log10 pi sin cos tan cot asin acos atan atan2 radians degrees trunc sign json_agg jsonb_agg json_object_agg jsonb_object_agg json_build_object jsonb_build_object json_build_array
   jsonb_build_array to_json to_jsonb row_to_json json_array_length jsonb_array_length json_array_elements jsonb_array_elements
   jsonb_array_elements_text json_each jsonb_each jsonb_each_text jsonb_object_keys jsonb_typeof jsonb_pretty jsonb_path_query
   row_number rank dense_rank percent_rank cume_dist ntile lag lead first_value last_value nth_value percentile_cont
   percentile_disc mode bool_and bool_or every stddev stddev_pop stddev_samp variance corr pg_size_pretty pg_total_relation_size
   pg_relation_size pg_table_size pg_indexes_size pg_database_size pg_typeof format_type obj_description col_description
-  current_setting has_table_privilege has_schema_privilege`.split(/\s+/));
+  current_setting has_table_privilege has_schema_privilege pg_get_functiondef pg_get_viewdef pg_get_indexdef
+  pg_get_constraintdef pg_get_triggerdef pg_get_function_arguments pg_get_function_result`.split(/\s+/));
 
 /** True only for SQL that can do nothing but read: SELECT/WITH/SHOW/EXPLAIN/VALUES/TABLE statements,
- *  no data-changing clause, and no call to a function outside a known read-only list. */
-export function readOnlySql(sql) {
+ *  no data-changing clause, and no call to a function outside a known read-only list.
+ *  `readFunctions`: a project's own functions it vouches for ("public.is_test_account"). */
+export function readOnlySql(sql, readFunctions = []) {
+  // A function vouched for in the public schema may also be called without it.
+  const vouched = new Set(readFunctions.flatMap((f) => { const n = String(f).toLowerCase(); return n.startsWith('public.') ? [n, n.slice(7)] : [n]; }));
   if (typeof sql !== 'string' || !sql.trim()) return false;
   const s = sql
     .replace(/\$(\w*)\$[\s\S]*?\$\1\$/g, "''") // dollar-quoted text
@@ -166,14 +170,15 @@ export function readOnlySql(sql) {
   if (!stmts.length || !stmts.every((x) => /^\(*\s*(select|with|show|explain|values|table)\b/i.test(x))) return false;
   for (const [, name] of s.matchAll(/([\w.]+)\s*\(/g)) {
     const n = name.toLowerCase();
+    if (vouched.has(n)) continue;
     if (n.includes('.') || !(SQL_PAREN_WORDS.has(n) || SQL_READ_FUNCS.has(n))) return false;
   }
   return true;
 }
 
 /** A connector call that only reads: a get_/list_/search_… tool, or execute_sql with SQL that only reads. */
-export function connectorReads(toolName, input) {
-  return /^mcp__/i.test(toolName) && (readTool(toolName) || (/execute_sql$/i.test(toolName) && readOnlySql(input?.query)));
+export function connectorReads(toolName, input, readFunctions = []) {
+  return /^mcp__/i.test(toolName) && (readTool(toolName) || (/execute_sql$/i.test(toolName) && readOnlySql(input?.query, readFunctions)));
 }
 
 /** The ids of the rules above, for a project's autoAllow. */
@@ -274,12 +279,13 @@ export function commandOnly(command) {
 }
 
 /** The first rule that asks for this tool call, if any. `autoAllow`: ids of rules above that a
- *  project lets run without asking (such as "merge"). */
-export function matchRule(toolName, input, extraRules = [], autoAllow = []) {
+ *  project lets run without asking (such as "merge"). `readFunctions`: SQL functions the project
+ *  vouches only read, so a SELECT that calls them is a read. */
+export function matchRule(toolName, input, extraRules = [], autoAllow = [], readFunctions = []) {
   const text = toolName === 'Bash' ? commandOnly(inputText(toolName, input)) : inputText(toolName, input);
   // Reading through a connector never asks, also under a project rule such as "every Supabase
   // tool", unless that rule sets "reads": true (for data that must not even be read unasked).
-  const reads = connectorReads(toolName, input);
+  const reads = connectorReads(toolName, input, readFunctions);
   for (const rule of [...COMPILED_DEFAULTS, ...compile(extraRules)]) {
     if (rule.id && autoAllow.includes(rule.id)) continue;
     if (!rule.tool.test(toolName)) continue;

@@ -1398,7 +1398,7 @@ export class Beckon {
     const tool = payload?.tool_name ?? 'unknown tool';
     const input = payload?.tool_input ?? {};
     if (kind === 'pre') {
-      const rule = matchRule(tool, input, project?.alwaysAsk ?? [], project?.autoAllow ?? []);
+      const rule = matchRule(tool, input, project?.alwaysAsk ?? [], project?.autoAllow ?? [], project?.sqlReadFunctions ?? []);
       if (rule) return this.ask(key, t, run, tool, input, rule.label, false);
       const area = project && !t.allowAll ? outsideArea(tool, input, this.scopeOf(t, project)) : null;
       if (!area) return { decision: 'none' };
