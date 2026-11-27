@@ -446,6 +446,11 @@ async function overview(my) {
       cell('Slack', WORD[o.slack.status] ?? o.slack.status, since(o.slack), STATE[o.slack.status] ?? ''),
       cell('Secret relay', WORD[o.relay.status] ?? o.relay.status, since(o.relay), STATE[o.relay.status] ?? ''),
       cell('Cấu hình', WORD[o.config.status] ?? o.config.status, o.config.status === 'rejected' ? 'xem Log' : since(o.config), STATE[o.config.status] ?? ''),
+      (() => {
+        const all = Object.values(o.connections ?? {}).flatMap((c) => c.servers ?? []);
+        const bad = [...new Set(all.filter((s) => ['expired', 'failed'].includes(connKind(s))).map(connName))];
+        return cell('Kết nối', !all.length ? 'Chưa rõ' : bad.length ? `${bad.length} cần xử lý` : 'Ổn', bad.length ? bad.join(', ') : all.length ? `${new Set(all.filter((s) => s.status === 'connected').map((s) => s.name)).size} đang kết nối` : 'sau lần chạy tới', !all.length ? '' : bad.length ? 'bad' : 'ok');
+      })(),
       cell('Bộ nhớ', d ? mb(d.treeRssKb) : '–', d ? `daemon ${mb(d.rssKb)} · app ${o.ui ? mb(o.ui.rssKb) : '?'}` : ''),
       cell('CPU', d ? d.treeCpu.toFixed(1) + '%' : '–', d ? `${d.procs} tiến trình` : '')),
     h('h2', {}, 'Projects'),
@@ -460,7 +465,7 @@ async function overview(my) {
 }
 
 // ---- a project ----
-const SUBS = { agents: 'Agents', runs: 'Runs', plan: 'Lịch & watch', settings: 'Cài đặt' };
+const SUBS = { agents: 'Agents', runs: 'Runs', conns: 'Kết nối', plan: 'Lịch & watch', settings: 'Cài đặt' };
 async function project(my) {
   const name = page.p, sub = page.s ?? 'agents';
   const p = ov.projectList.find((x) => x.name === name);
@@ -497,6 +502,9 @@ async function project(my) {
     q.addEventListener('input', filter); filter();
     header(name, status, [h('div', { class: 'search' }, icon('search'), q), seg]);
     fill(view, h('div', { class: 'page' }, box));
+  } else if (sub === 'conns') {
+    header(name, status, [seg]);
+    fill(view, connPage(name));
   } else {
     await ensureConfig();
     if (my !== seq) return;
@@ -505,6 +513,46 @@ async function project(my) {
     if (sub === 'plan') planPage(name); else projectSettings(name);
   }
 }
+// ---- connections: the connectors and MCP servers a project's runs start with ----
+// Claude Code reports a status, not an expiry date: a sign-in that ran out shows as
+// "needs-auth" on a connector that worked before.
+const SOURCE = { claudeai: 'claude.ai', plugin: 'plugin', dynamic: 'cấu hình beckon', project: '.mcp.json của repo', user: 'máy này', local: 'máy này' };
+const CONN = { expired: ['bad', 'Hết hạn, cần đăng nhập lại'], failed: ['bad', 'Không chạy được'], pending: ['warn', 'Đang kết nối'], connected: ['ok', 'Đã kết nối'], never: ['', 'Chưa kết nối'], other: ['', 'Khác'] };
+function connKind(s) {
+  if (s.status === 'connected') return 'connected';
+  if (s.status === 'needs-auth') return s.lastOk ? 'expired' : 'never';
+  return CONN[s.status] ? s.status : 'other';
+}
+const connName = (s) => s.name.replace(/^claude\.ai /, '').replace(/^plugin:[^:]+:/, '');
+function connRow(s) {
+  const kind = connKind(s);
+  const fix = s.source === 'claudeai' ? 'kết nối lại ở claude.ai → Settings → Connectors' : 'kết nối lại: chạy claude trên máy này, gõ /mcp';
+  const meta = [SOURCE[s.source] ?? s.source,
+    kind === 'connected' ? 'kết nối từ ' + when(s.since) : null,
+    kind === 'expired' ? 'hết hạn từ ' + when(s.since) : null,
+    kind === 'expired' || kind === 'failed' ? (s.lastOk ? 'chạy được lần cuối ' + when(s.lastOk) : null) : null,
+    kind === 'failed' ? 'lỗi từ ' + when(s.since) : null,
+    kind === 'expired' || kind === 'never' ? fix : null].filter(Boolean).join(' · ');
+  return h('div', { class: 'r' }, h('span', { class: 'dot ' + CONN[kind][0] }),
+    h('div', { class: 'main' }, h('div', { title: s.name }, connName(s)), h('div', { class: 'meta' }, meta)),
+    h('div', { class: 'n' }, h('span', { class: 'chip ' + (kind === 'connected' ? 'ok' : kind === 'expired' || kind === 'failed' ? 'bad' : '') }, CONN[kind][1])));
+}
+function connPage(name) {
+  const c = ov.connections?.[name];
+  if (!c?.servers?.length) return h('div', { class: 'page' }, h('div', { class: 'box empty' }, 'Chưa có dữ liệu: danh sách hiện sau lần chạy tiếp theo của project này.'));
+  const by = {};
+  for (const s of c.servers) (by[connKind(s)] ??= []).push(s);
+  const sort = (l) => l.sort((a, b) => connName(a).localeCompare(connName(b)));
+  const group = (kind, title) => by[kind]?.length ? [h('h2', {}, title, h('span', { class: 'count' }, by[kind].length)), h('div', { class: 'box list' }, sort(by[kind]).map(connRow))] : null;
+  const slot = h('div');
+  const never = by.never?.length ? [h('h2', {}, 'Chưa kết nối', h('span', { class: 'count' }, by.never.length),
+    h('button', { class: 'link', onclick: () => slot.replaceChildren(slot.childElementCount ? '' : h('div', { class: 'box list' }, sort(by.never).map(connRow))) }, 'Xem')), slot] : null;
+  return h('div', { class: 'page' },
+    h('p', { class: 'muted small' }, `Theo lần chạy gần nhất của ${name}, ${when(c.at)}. Claude Code chỉ báo trạng thái, không báo ngày hết hạn: kết nối hết hạn đăng nhập hiện ở mục đầu.`),
+    group('expired', 'Hết hạn, cần đăng nhập lại'), group('failed', 'Không chạy được'), group('pending', 'Đang kết nối'), group('other', 'Khác'),
+    group('connected', 'Đã kết nối'), never);
+}
+
 // A tiny markdown view for reports: text is escaped first, then headings, lists, bold and code.
 function md(text) {
   const esc = (x) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

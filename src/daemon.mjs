@@ -1049,6 +1049,7 @@ export class Beckon {
         }
         run.tabs?.push(e);
         if (e.type === 'system' && e.subtype === 'background_tasks_changed') run.background = e.tasks?.length ?? 0;
+        if (e.type === 'system' && e.subtype === 'init') this.noteConnections(t.project, e.mcp_servers);
         if (run.progress.push(e)) this.refresh(key);
         this.trackSubagent(key, run, project, e).catch((err) => this.log(`Subagent message in ${key} failed: ${err.message}`));
       },
@@ -1056,6 +1057,30 @@ export class Beckon {
     if (res.sessionId) t.started = true;
     this.state.save();
     return res;
+  }
+
+  // The connectors and MCP servers a run started with (from Claude Code's init event): what
+  // beckon desktop shows. For each one: its status, since when, and when it last worked, so a
+  // connector whose sign-in expired stands apart from one never set up.
+  noteConnections(project, servers) {
+    if (!project || !Array.isArray(servers)) return;
+    const now = this.now();
+    const before = new Map((this.state.connections[project]?.servers ?? []).map((s) => [s.name, s]));
+    const list = servers.filter((s) => typeof s?.name === 'string').map((s) => {
+      const old = before.get(s.name);
+      const status = typeof s.status === 'string' ? s.status : 'unknown';
+      // Still connecting when the run started: keep what was known.
+      if (status === 'pending' && old) return old;
+      return {
+        name: s.name,
+        source: typeof s.source === 'string' ? s.source : null,
+        status,
+        since: old?.status === status ? old.since : now,
+        lastOk: status === 'connected' ? now : old?.lastOk ?? null,
+      };
+    });
+    this.state.connections[project] = { at: now, servers: list };
+    this.state.save();
   }
 
   // An agent's answer that ends with "@qa <task>" gives the thread to that agent, up to

@@ -422,10 +422,11 @@ On macOS it is a **menu bar app**. Its icon in the top bar shows how many runs a
 
 The window has the full UI, with a sidebar like a Mac app's (its text is in Vietnamese):
 
-- **Overview:** whether beckon is running, the Slack and secret relay connections, config status, memory and CPU, a card per project with its agents, what is running now, and a Restart button.
-- **Each project**, with four tabs:
+- **Overview:** whether beckon is running, the Slack and secret relay connections, config status, connectors that need attention, memory and CPU, a card per project with its agents, what is running now, and a Restart button.
+- **Each project**, with five tabs:
   - **Agents:** a card per agent (its colour and label as in Slack, lead and default, how it posts in Slack, idle or working), what is running in the project and its recent runs. Click an agent to edit it, or add one.
   - **Runs:** every thread of the project, whether it is running, and its tokens.
+  - **Connections:** the claude.ai connectors and MCP servers the project's last run started with: connected, sign-in expired (it worked before and now needs a new sign-in), not running, or never connected, with since when and when each last worked, and where to sign in again. Claude Code reports a status, not an expiry date, so an expired sign-in shows up at the next run.
   - **Schedules and watches** of the project.
   - **Settings:** folder, channels, lead and default agent, model, permission mode, instructions, and removing the project.
 - **Usage:** tokens per day, per model and per project, and the largest runs.

@@ -994,3 +994,33 @@ test('a run is reminded to stop the servers, containers and simulators it starte
     await close();
   }
 });
+
+test('the connectors a run starts with are kept per project: status, since when, and when they last worked', async () => {
+  let clock = 1_000;
+  const servers = [{ name: 'claude.ai Slack', status: 'connected', source: 'claudeai' }, { name: 'claude.ai Notion', status: 'needs-auth', source: 'claudeai' }];
+  const { beckon, state, done, close } = await setup({ env: { FAKE_MCP_SERVERS: JSON.stringify(servers) }, beckonOptions: { now: () => clock } });
+  try {
+    await beckon.handleEvent(mention('hello'));
+    await done();
+    const first = state.connections.proj;
+    assert.equal(first.at, 1_000);
+    assert.deepEqual(first.servers.find((x) => x.name === 'claude.ai Slack'), { name: 'claude.ai Slack', source: 'claudeai', status: 'connected', since: 1_000, lastOk: 1_000 });
+    assert.equal(first.servers.find((x) => x.name === 'claude.ai Notion').lastOk, null, 'never connected');
+
+    // Later the Slack sign-in runs out; a server still connecting keeps what was known.
+    clock = 5_000;
+    beckon.noteConnections('proj', [
+      { name: 'claude.ai Slack', status: 'needs-auth', source: 'claudeai' },
+      { name: 'claude.ai Notion', status: 'needs-auth', source: 'claudeai' },
+      { name: 'peekaboo', status: 'pending', source: 'dynamic' },
+    ]);
+    clock = 9_000;
+    beckon.noteConnections('proj', [{ name: 'claude.ai Slack', status: 'needs-auth' }, { name: 'peekaboo', status: 'connected', source: 'dynamic' }, { name: 'claude.ai Notion', status: 'pending' }]);
+    const now = Object.fromEntries(state.connections.proj.servers.map((x) => [x.name, x]));
+    assert.deepEqual([now['claude.ai Slack'].status, now['claude.ai Slack'].since, now['claude.ai Slack'].lastOk], ['needs-auth', 5_000, 1_000]);
+    assert.deepEqual([now['claude.ai Notion'].status, now['claude.ai Notion'].since], ['needs-auth', 1_000]);
+    assert.deepEqual([now.peekaboo.status, now.peekaboo.lastOk], ['connected', 9_000]);
+  } finally {
+    await close();
+  }
+});
