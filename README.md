@@ -390,6 +390,7 @@ Limits:
   "approvalTimeoutMinutes": 60,
   "maxParallel": 3,                       // runs at once; more wait in a queue
   "maxHandoffs": 3,                       // agents handing a thread on, in a row, before a person must reply
+  "contextWindow": 200000,                // a thread's session is compacted near this many tokens; 0 = Claude's own limit
   "keepDays": 7,                          // idle worktrees are removed after this
   "claudePath": "claude",
   "allowApiKey": false                    // true keeps ANTHROPIC_API_KEY for claude

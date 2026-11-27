@@ -14,6 +14,8 @@ test('first turn names the session, later turns resume it', () => {
   assert.equal(hooks.PreToolUse[0].hooks[0].command, '"/n o/node" "/x/hook.mjs" pre');
   assert.equal(hooks.PermissionRequest[0].hooks[0].timeout, 3660);
   assert.equal(hooks.Stop[0].hooks[0].command, '"/n o/node" "/x/hook.mjs" stop');
+  assert.equal(settings.autoCompactWindow, undefined, 'no window: Claude keeps its own');
+  assert.equal(hookSettings({ nodePath: 'n', hookScript: 'h', timeoutSeconds: 1, contextWindow: 200_000 }).autoCompactWindow, 200_000);
   const withMcp = claudeArgs({ sessionId: 'S', resume: true, settings, mcpConfig: '/x/mcp.json' });
   assert.equal(withMcp[withMcp.indexOf('--mcp-config') + 1], '/x/mcp.json');
   assert.ok(!first.includes('--mcp-config'));

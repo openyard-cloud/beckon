@@ -211,6 +211,9 @@ export function validateConfig(raw) {
     maxParallel: num('maxParallel', 3, 1, 20),
     // Agents handing a thread to each other: at most this many in a row without a person's message.
     maxHandoffs: num('maxHandoffs', 3, 0, 30),
+    // A thread's session is compacted once its context nears this many tokens; 0 keeps Claude's own
+    // limit (up to 1M on large-context models, which every step of a long thread then re-reads).
+    contextWindow: num('contextWindow', 200_000, 0, 1_000_000),
     keepDays: num('keepDays', 7, 1, 365),
     shutdownGraceMinutes: num('shutdownGraceMinutes', 30, 0, 240),
     claudePath: typeof raw.claudePath === 'string' ? expandHome(raw.claudePath) : 'claude',
