@@ -1,6 +1,27 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchRule } from '../src/policy.mjs';
+import { matchRule, outsideArea } from '../src/policy.mjs';
+
+test('paths outside the project are found in commands and file tools', () => {
+  const scope = {
+    home: '/Users/t',
+    guarded: ['/Users/t/Projects', '/Users/t/.beckon'],
+    allowed: ['/Users/t/Projects/pickcourt', '/Users/t/.beckon/worktrees/pickcourt/1-2', '/Users/t/Projects/beckon/bin/beckon-secret.mjs'],
+  };
+  const bash = (command) => outsideArea('Bash', { command }, scope);
+  assert.equal(bash('ls /Users/t/Projects/beckon 2>/dev/null | head'), '/Users/t/Projects/beckon');
+  assert.equal(bash('sed -n 1,5p ~/Projects/beckon/README.md'), '/Users/t/Projects/beckon');
+  assert.equal(bash('cat $HOME/.beckon/env'), '/Users/t/.beckon/env');
+  assert.equal(bash('ls ~/Projects'), '/Users/t/Projects');
+  assert.equal(bash('grep -rn foo src/a /Users/t/Projects/pickcourt-old/x'), '/Users/t/Projects/pickcourt-old');
+  assert.equal(bash('cd /Users/t/.beckon/worktrees/pickcourt/1-2 && grep -rn x apps/'), null);
+  assert.equal(bash('node "/Users/t/Projects/beckon/bin/beckon-secret.mjs" --label a'), null, 'the secret helper is allowed');
+  assert.equal(bash('ls ~/.claude/projects/-Users-t-Projects-pickcourt/memory'), null);
+  assert.equal(bash('curl https://x.com/Users/t/Projects/beckon; sed s/a/b/g f'), null, 'URLs and sed scripts are not paths');
+  assert.equal(outsideArea('Read', { file_path: '/Users/t/Projects/vetcode/a b.md' }, scope), '/Users/t/Projects/vetcode');
+  assert.equal(outsideArea('Grep', { pattern: 'x', path: '/Users/t/Projects/pickcourt/apps' }, scope), null);
+  assert.equal(outsideArea('Glob', { pattern: '**/*.ts', path: '~/.beckon/worktrees/hush/9' }, scope), '/Users/t/.beckon/worktrees');
+});
 
 const bash = (command, extra) => matchRule('Bash', { command }, extra);
 

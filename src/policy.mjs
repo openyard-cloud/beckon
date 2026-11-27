@@ -1,3 +1,5 @@
+import { join, relative, resolve } from 'node:path';
+
 // Actions that always wait for a button press in Slack, even when the permission mode or the
 // repository's allow rules would let them run. Each rule matches the tool name and, for Bash,
 // the command text. A command chained with && or ; is checked as a whole, so a risky part
@@ -181,6 +183,42 @@ export function matchRule(toolName, input, extraRules = []) {
     if (rule.match && !rule.match.test(text)) continue;
     if (reads && !rule.reads) continue;
     return { label: rule.label };
+  }
+  return null;
+}
+
+// ---- project scope ----
+
+const FILE_FIELDS = ['file_path', 'path', 'notebook_path'];
+// An absolute or home path written out in a command: not part of a URL, a relative path or a word.
+const PATH_IN_TEXT = /(?<![\w:/.~$}-])(?:~|\$\{?HOME\}?)?\/[^\s'"`;|&<>(){}]*/g;
+
+const inside = (p, root) => p === root || p.startsWith(root.endsWith('/') ? root : `${root}/`);
+
+/** Absolute paths a tool call names: the path fields of file tools, and paths written out in a
+ *  Bash command (~ and $HOME expanded, globs cut off). A relative path that climbs out (cd ../..)
+ *  is not seen, so this is a guard against wandering off, not a sandbox. */
+export function namedPaths(toolName, input, home) {
+  if (!input || typeof input !== 'object') return [];
+  const expand = (p) => resolve(p.replace(/^(?:~|\$\{?HOME\}?)(?=\/|$)/, home).split(/[*?[]/)[0] || '/');
+  if (toolName === 'Bash') {
+    return [...String(input.command ?? '').matchAll(PATH_IN_TEXT)].map(([m]) => expand(m));
+  }
+  return FILE_FIELDS.map((f) => input[f])
+    .filter((v) => typeof v === 'string' && /^(?:~|\$\{?HOME\}?)?\//.test(v))
+    .map(expand);
+}
+
+/** The first folder outside the project that a tool call reaches into: a path inside one of the
+ *  guarded folders (the folder that holds the project and its neighbours, beckon's own data) but
+ *  in none of the allowed ones (the project, the thread's worktree, folders already allowed). It
+ *  returns the folder one level under the guarded one, so one answer covers that whole neighbour. */
+export function outsideArea(toolName, input, { home, guarded, allowed }) {
+  for (const p of namedPaths(toolName, input, home)) {
+    if (allowed.some((a) => inside(p, a))) continue;
+    const root = guarded.find((g) => inside(p, g));
+    if (!root) continue;
+    return p === root ? root : join(root, relative(root, p).split('/')[0]);
   }
   return null;
 }

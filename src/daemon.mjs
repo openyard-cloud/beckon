@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { join, isAbsolute } from 'node:path';
+import { join, isAbsolute, dirname, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { Progress } from './progress.mjs';
 import { TabTracker } from './tabs.mjs';
 import { validateRequest as validateSecretRequest, NoPasskeyError } from './secrets.mjs';
 import { findName, checkRepo, addProject, removeProject, linkChannel, unlinkChannel, setDefault, readRaw, writeRaw } from './projects.mjs';
 import { slackToPlain, commandText, chunkMarkdown, oneLine, duration } from './text.mjs';
-import { matchRule, inputText } from './policy.mjs';
+import { matchRule, inputText, outsideArea } from './policy.mjs';
 import { claudeArgs, hookSettings, runClaude as defaultRunClaude, childEnv } from './claude.mjs';
 import { ensureWorktree as defaultEnsureWorktree, removeWorktree as defaultRemoveWorktree } from './worktree.mjs';
 import { parseCron, cronMatches, minuteKey } from './cron.mjs';
@@ -897,6 +898,7 @@ export class Beckon {
       '- Start the final message with one sentence that sums up what you did or found, on its own line. Then add details only if they help: links to what you opened (pull requests, deploys) and anything that needs a decision. Keep it short.',
       '- Nobody answers questions during a run, so if you need a decision, end the turn and ask; the answer arrives as the next message. People can still add messages to the thread while you work: they reach you as new user messages, and you take them into account right away (a person saying to stop, wrap up or change course comes first).',
       `- You are in a git worktree of the "${project.name}" repository (${project.path})${ref ? `, started from ${ref} on a detached HEAD` : ''}. Create a branch before committing, following the repository's own conventions.`,
+      `- Stay inside the "${project.name}" project: look for answers in this worktree, the project's own notes and its connected services, never in other folders on this machine (other repositories, beckon or its settings). When people say "our site", "our app" or "the tool for this", they mean ${project.name}'s. If what they ask for is not in the project, say so and ask; reading outside it waits for the person's Allow button.`,
       '- Do the work yourself, all the way. Never hand the user a command to run, a button to click or a step to do by hand, not even as an alternative or a fallback: run it. This includes builds, releases, deploys, migrations and pushes, even where the repository notes say the owner usually does them by hand.',
       '- Close every browser tab or window you opened as soon as you are done with it, and always before your final message, also when the task failed. Prefer ways that open nothing: curl, gh and other CLIs, or headless Playwright, to read pages; Claude in Chrome tabs (closed with tabs_close) when those tools are available. Avoid `open <url>`; if you used it, close that tab afterwards (on macOS, with osascript, matching the exact URL you opened). Close headed browsers you launched. Never close tabs you did not open.',
       '- You do not need to hold back risky steps: beckon sends deploys, releases, pushes to main branches, merges, migrations, publishing and similar actions to the user as an Allow button the moment you run them, and that button is the user\'s decision. If one is denied, do not reach the same result another way; say what is left undone. If the approval itself fails (for example beckon is not reachable), run the same command again once; if it fails again, stop and say so, and the user will reply to continue.',
@@ -1367,6 +1369,20 @@ export class Beckon {
 
   // ---- approvals ----
 
+  // Where a run may look without asking: the project, its worktree and what the person already
+  // allowed in this thread. Asking covers the project's neighbours (the folder that holds it) and
+  // beckon's own data (settings, tokens, other threads' worktrees); a folder that is the home
+  // folder itself is not guarded, or every tool would ask.
+  scopeOf(t, project) {
+    const home = homedir();
+    const guarded = [dirname(resolve(project.path)), dirname(resolve(this.worktreesDir))]
+      .filter((g) => g !== home && g !== '/' && !home.startsWith(`${g}/`));
+    const skills = Object.values(project.agents ?? {}).flatMap((a) => a.skills ?? []).filter(isAbsolute);
+    const allowed = [project.path, t.worktree, ...skills, ...(t.outsideAllowed ?? [])].map((p) => resolve(p));
+    if (this.secretScript) allowed.push(this.secretScript);
+    return { home, guarded, allowed };
+  }
+
   async onHook({ kind, thread: key, payload }) {
     const t = this.state.threads[key];
     const run = this.running.get(key);
@@ -1377,8 +1393,16 @@ export class Beckon {
     const input = payload?.tool_input ?? {};
     if (kind === 'pre') {
       const rule = matchRule(tool, input, project?.alwaysAsk ?? []);
-      if (!rule) return { decision: 'none' };
-      return this.ask(key, t, run, tool, input, rule.label, false);
+      if (rule) return this.ask(key, t, run, tool, input, rule.label, false);
+      const area = project && !t.allowAll ? outsideArea(tool, input, this.scopeOf(t, project)) : null;
+      if (!area) return { decision: 'none' };
+      const shown = area.startsWith(homedir() + '/') ? `~${area.slice(homedir().length)}` : area;
+      const res = await this.ask(key, t, run, tool, input, `reaches outside the ${project.name} project (${shown})`, false);
+      if (res.decision === 'allow') {
+        (t.outsideAllowed ??= []).push(area);
+        this.state.save();
+      }
+      return res;
     }
     if (kind === 'secret') return this.onSecret(key, t, run, payload);
     if (kind === 'permission') {
