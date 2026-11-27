@@ -189,7 +189,7 @@ Three kinds of requests come to Slack:
 
 1. **Always asked**, even in `bypassPermissions` mode and even when your settings allow the command:
    - a push to `main`, `master`, `production` or `release`, a force push, or a branch delete;
-   - `gh pr merge`, releases, repository settings, and `gh api` calls with POST, PUT, PATCH or DELETE;
+   - `gh pr merge`; releases, repository settings, and `gh api` calls with POST, PUT, PATCH or DELETE;
    - production deploys and changes on Vercel, Cloudflare (`wrangler`), Koyeb, Supabase, Fly, Railway, Netlify, Firebase, EAS and Heroku;
    - publishing to npm, PyPI, crates.io or RubyGems, and `docker push`;
    - Terraform, kubectl, Helm, and changes made with the AWS, Google Cloud and Azure CLIs;
@@ -198,7 +198,7 @@ Three kinds of requests come to Slack:
    - MCP connector tools that deploy, migrate, delete, merge, publish or send messages;
    - clicks on consequential buttons on screen (Submit, Upload, Distribute, Release, Delete, ...), when screen control is set up (see below).
 
-   The full list is in [`src/policy.mjs`](src/policy.mjs). Add your own per project with `alwaysAsk`. Reading through a connector never asks, also under your own rules: tools named `get_…`, `list_…`, `search_…` and the like, and `execute_sql` with SQL that only reads. A rule with `"reads": true` asks for those too. Text a command only carries does not count either, for your rules as for these: a deploy command written into a file (`cat > notes.md <<'EOF'`), quoted in a sed script or a PR body, or in a string of a Python script. Text a shell runs still counts (`sh -c '...'`, `ssh host '...'`, `bash <<'EOF'`).
+   The full list is in [`src/policy.mjs`](src/policy.mjs). Add your own per project with `alwaysAsk`. Let a project run some of these without asking with `autoAllow` and the rules' ids: `push-main`, `merge`, `github`, `deploy`, `release`, `publish`, `infra`, `database`, `root-delete`, `connector`, `screen-click`, `screen-agent`, `browser-submit`. For example `"autoAllow": ["merge"]` lets agents merge their pull requests; mind what a merge sets off, such as a deploy on push to main. Reading through a connector never asks, also under your own rules: tools named `get_…`, `list_…`, `search_…` and the like, and `execute_sql` with SQL that only reads. A rule with `"reads": true` asks for those too. Text a command only carries does not count either, for your rules as for these: a deploy command written into a file (`cat > notes.md <<'EOF'`), quoted in a sed script or a PR body, or in a string of a Python script. Text a shell runs still counts (`sh -c '...'`, `ssh host '...'`, `bash <<'EOF'`).
 
 2. **Permission prompts.** These are tool uses your permission mode and allow rules do not already cover. **Allow everything in this thread** stops these prompts for the rest of that thread. Always-asked actions still ask.
 
@@ -354,7 +354,8 @@ Limits:
       "alwaysAsk": [
         "playwright test",                // a regex on Bash commands
         { "tool": "^(Edit|Write)$", "match": "migrations/", "label": "edit a migration" }
-      ]
+      ],
+      "autoAllow": ["merge"]              // optional: default rules that do not ask here, by id
     }
   },
   "defaultProject": "myapp",              // for DMs; default: the only project

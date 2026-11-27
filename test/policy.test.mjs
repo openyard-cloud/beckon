@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchRule, outsideArea } from '../src/policy.mjs';
+import { matchRule, outsideArea, RULE_IDS } from '../src/policy.mjs';
 
 test('paths outside the project are found in commands and file tools', () => {
   const scope = {
@@ -23,7 +23,7 @@ test('paths outside the project are found in commands and file tools', () => {
   assert.equal(outsideArea('Glob', { pattern: '**/*.ts', path: '~/.beckon/worktrees/hush/9' }, scope), '/Users/t/.beckon/worktrees');
 });
 
-const bash = (command, extra) => matchRule('Bash', { command }, extra);
+const bash = (command, extra, autoAllow) => matchRule('Bash', { command }, extra, autoAllow);
 
 test('asks before pushes to main, force pushes and branch deletes', () => {
   for (const c of [
@@ -56,6 +56,14 @@ test('asks before deploys and production changes', () => {
   for (const c of ['vercel build', 'wrangler dev', 'wrangler d1 execute db --local --command "select 1"', 'supabase start', 'koyeb service list', 'pnpm build']) {
     assert.equal(bash(c), null, c);
   }
+});
+
+test('a project can let some default rules run without asking, by id', () => {
+  assert.equal(bash('gh pr merge 103 --merge')?.label, 'merge a pull request');
+  assert.equal(bash('gh pr merge 103 --merge', [], ['merge']), null, 'merges run on their own');
+  assert.equal(bash('gh release create v1.0.0', [], ['merge'])?.label, 'release or change repository settings on GitHub', 'other GitHub changes still ask');
+  assert.equal(bash('gh pr merge 1 && git push origin main', [], ['merge'])?.label, 'push to a main branch, force push or branch delete');
+  assert.ok(RULE_IDS.includes('merge') && RULE_IDS.includes('deploy'));
 });
 
 test('asks before merges, releases, publishing and direct database access', () => {

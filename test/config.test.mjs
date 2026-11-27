@@ -91,6 +91,14 @@ test('project agents: names, skills folders, channels of the project, and refere
   assert.equal(config.projects.a.defaultAgent, null);
 });
 
+test('autoAllow takes ids of default rules', () => {
+  const ok = validateConfig({ users: ['U1'], projects: { a: { path: '/a', autoAllow: ['merge'] } } });
+  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(ok.config.projects.a.autoAllow, ['merge']);
+  const bad = validateConfig({ users: ['U1'], projects: { a: { path: '/a', autoAllow: ['merges'] } } });
+  assert.match(bad.errors[0], /autoAllow: a list of rule ids, from push-main, merge/);
+});
+
 test('an agent can be defined in the config with a prompt; an old slackApp is ignored', () => {
   const { errors, config } = validateConfig({
     users: ['U1'],

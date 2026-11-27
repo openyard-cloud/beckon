@@ -16,16 +16,25 @@ const cmd = (name) => `${AT}(?:${name})(?:@\\S+)?\\b`;
 
 export const DEFAULT_RULES = [
   {
+    id: 'push-main',
     label: 'push to a main branch, force push or branch delete',
     tool: '^Bash$',
     match: String.raw`${cmd('git')}(?:\s+-[Cc]\s+\S+)*\s+push\b${ARGS}(\s(main|master|production|prod|release)\b|:(main|master|production|prod)\b|\s--force\b|\s--force-with-lease\b|\s-f\b|\s--delete\b|\s-d\b|\s--mirror\b|\s\+\S)`,
   },
   {
-    label: 'merge, release or change repository settings on GitHub',
+    id: 'merge',
+    label: 'merge a pull request',
     tool: '^Bash$',
-    match: String.raw`${cmd('gh')}\s+(pr\s+merge|release\s+(create|delete|upload|edit)|repo\s+(delete|archive|rename|edit)|secret\s+(set|delete)|variable\s+(set|delete)|workflow\s+(run|enable|disable)|api\b${ARGS}(-X|--method)\s*(POST|PUT|PATCH|DELETE))`,
+    match: String.raw`${cmd('gh')}\s+pr\s+merge\b`,
   },
   {
+    id: 'github',
+    label: 'release or change repository settings on GitHub',
+    tool: '^Bash$',
+    match: String.raw`${cmd('gh')}\s+(release\s+(create|delete|upload|edit)|repo\s+(delete|archive|rename|edit)|secret\s+(set|delete)|variable\s+(set|delete)|workflow\s+(run|enable|disable)|api\b${ARGS}(-X|--method)\s*(POST|PUT|PATCH|DELETE))`,
+  },
+  {
+    id: 'deploy',
     label: 'deploy or change production',
     tool: '^Bash$',
     match: [
@@ -43,6 +52,7 @@ export const DEFAULT_RULES = [
     ].join('|'),
   },
   {
+    id: 'release',
     label: 'release an app or push a patch to users',
     tool: '^Bash$',
     match: [
@@ -54,27 +64,32 @@ export const DEFAULT_RULES = [
     ].join('|'),
   },
   {
+    id: 'publish',
     label: 'publish a package or image',
     tool: '^Bash$',
     match: String.raw`${cmd('npm|pnpm|yarn|bun')}\s+(publish|unpublish|deprecate|dist-tag\s+(add|rm))\b|${cmd('cargo')}\s+publish\b|${cmd('twine')}\s+upload\b|${cmd('docker|podman')}\s+push\b|${cmd('gem')}\s+push\b`,
   },
   {
+    id: 'infra',
     label: 'change cloud infrastructure',
     tool: '^Bash$',
     match: String.raw`${cmd('terraform|tofu')}\s+(apply|destroy|import|state\s+(rm|mv))\b|${cmd('kubectl')}${ARGS}\b(apply|delete|replace|scale|rollout|patch|edit|drain|cordon|create)\b|${cmd('helm')}\s+(install|upgrade|uninstall|rollback)\b|${cmd('aws')}\s+\S+\s+(delete|terminate|put|update|create|rm|sync)\S*|${cmd('gcloud')}${ARGS}\b(deploy|delete|update|create)\b|${cmd('az')}${ARGS}\b(delete|create|update|deploy)\b`,
   },
   {
+    id: 'database',
     label: 'connect to a database directly',
     tool: '^Bash$',
     match: String.raw`(^|[\s;&|(])(psql|mysql|mariadb|mongosh?|redis-cli|sqlcmd|clickhouse-client)\b`,
   },
   {
+    id: 'root-delete',
     label: 'run as root or delete outside the worktree',
     tool: '^Bash$',
     // Temporary folders (/tmp, /private/tmp, /var/folders) do not count: agents clean up there.
     match: String.raw`(?:^|[;&|(\n]\s*)sudo\b|${cmd('rm')}${ARGS}(\s-[a-zA-Z]*[rR][a-zA-Z]*|\s--recursive)\b${ARGS}\s("|')?(?!(?:\/tmp|\/private\/tmp|\/var\/folders)\/(?![^\s"']*\.\.)[^\s"'/])(\/|~|\$HOME|\.\.)`,
   },
   {
+    id: 'connector',
     label: 'a connector action that changes something',
     // Reads never get here (see connectorReads): get_deployment is not a deploy, list_shared_drives
     // is not a share, and a SELECT through execute_sql changes nothing.
@@ -85,12 +100,14 @@ export const DEFAULT_RULES = [
     // Screen control through Peekaboo (openyard-cloud/Peekaboo): its guard refuses clicks on
     // consequential buttons (Submit, Upload, Distribute, Release, Delete, ...) until they are
     // repeated with confirm set to the button's label. That repeat is what asks here.
+    id: 'screen-click',
     label: 'click a consequential button on screen',
     tool: String.raw`^mcp__.*peekaboo.*__(click|action)$`,
     match: String.raw`"confirm"\s*:`,
   },
   {
     // Peekaboo's own agent clicks step by step inside one call, out of beckon's sight.
+    id: 'screen-agent',
     label: "Peekaboo's own agent (it acts without per-step approval)",
     tool: String.raw`^mcp__.*peekaboo.*__agent$`,
     match: null,
@@ -98,6 +115,7 @@ export const DEFAULT_RULES = [
   {
     // Browser actions that can submit or confirm something. The guard does not see inside web
     // pages, so these ask every time; reading, navigating and filling fields do not.
+    id: 'browser-submit',
     label: 'a browser action that can submit',
     tool: String.raw`^mcp__.*peekaboo.*__browser$`,
     match: String.raw`"action"\s*:\s*"(click|dom_click|press_key|upload_file|handle_dialog|call)"`,
@@ -158,8 +176,12 @@ export function connectorReads(toolName, input) {
   return /^mcp__/i.test(toolName) && (readTool(toolName) || (/execute_sql$/i.test(toolName) && readOnlySql(input?.query)));
 }
 
+/** The ids of the rules above, for a project's autoAllow. */
+export const RULE_IDS = DEFAULT_RULES.map((r) => r.id);
+
 function compile(rules) {
   return rules.map((r) => ({
+    id: r.id ?? null,
     reads: !!r.reads,
     label: r.label,
     tool: new RegExp(r.tool, 'i'),
@@ -251,12 +273,15 @@ export function commandOnly(command) {
   return [out, ...code].join('\n');
 }
 
-export function matchRule(toolName, input, extraRules = []) {
+/** The first rule that asks for this tool call, if any. `autoAllow`: ids of rules above that a
+ *  project lets run without asking (such as "merge"). */
+export function matchRule(toolName, input, extraRules = [], autoAllow = []) {
   const text = toolName === 'Bash' ? commandOnly(inputText(toolName, input)) : inputText(toolName, input);
   // Reading through a connector never asks, also under a project rule such as "every Supabase
   // tool", unless that rule sets "reads": true (for data that must not even be read unasked).
   const reads = connectorReads(toolName, input);
   for (const rule of [...COMPILED_DEFAULTS, ...compile(extraRules)]) {
+    if (rule.id && autoAllow.includes(rule.id)) continue;
     if (!rule.tool.test(toolName)) continue;
     if (rule.match && !rule.match.test(text)) continue;
     if (reads && !rule.reads) continue;
