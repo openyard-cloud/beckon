@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { join, isAbsolute, dirname, resolve } from 'node:path';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { checkAttachment, inTempFolder } from './attach.mjs';
+import { readAccount as defaultReadAccount } from './account.mjs';
 import { scan as defaultScan, newSince, isEmpty, describe as describeLeftovers, summary as leftoverSummary, stopProcesses } from './leftovers.mjs';
 import { homedir } from 'node:os';
 import { Progress } from './progress.mjs';
@@ -18,6 +19,7 @@ import { parseCron, cronMatches, minuteKey } from './cron.mjs';
 const REFRESH_MS = 2000;
 const TICK_MS = 15_000;
 const GC_MS = 6 * 60 * 60 * 1000;
+const ACCOUNT_MS = 30 * 60_000;
 const STOP_WORDS = /^(stop|cancel|abort)[.!]*$/i;
 const PROJECT_PREFIX = /^([a-z0-9][a-z0-9._-]*):\s*/i;
 const AGENT_TAG = /^@([a-z0-9][a-z0-9_-]*)\b[:,]?\s*/i;
@@ -150,8 +152,9 @@ export class Beckon {
     attachScript = null,
     scanLeftovers = defaultScan,
     stopLeftovers = stopProcesses,
+    readAccount = defaultReadAccount,
   }) {
-    Object.assign(this, { config, slack, state, worktreesDir, nodePath, hookScript, env, log, runClaude, ensureWorktree, removeWorktree, runSetup, now, configFile, secrets, secretScript, attachScript, scanLeftovers, stopLeftovers });
+    Object.assign(this, { config, slack, state, worktreesDir, nodePath, hookScript, env, log, runClaude, ensureWorktree, removeWorktree, runSetup, now, configFile, secrets, secretScript, attachScript, scanLeftovers, stopLeftovers, readAccount });
     this.configText = null;
     this.hook = null;
     this.botUserId = null;
@@ -182,6 +185,8 @@ export class Beckon {
       this.timers.push(setInterval(() => this.tick().catch((e) => this.log(`Schedule check failed: ${e.message}`)), TICK_MS));
       this.timers.push(setInterval(() => this.gc().catch((e) => this.log(`Cleanup failed: ${e.message}`)), GC_MS));
       this.gc().catch((e) => this.log(`Cleanup failed: ${e.message}`));
+      this.timers.push(setInterval(() => this.checkAccount(), ACCOUNT_MS));
+      this.checkAccount();
     }
     this.log(`Connected to Slack as <@${this.botUserId}>; projects: ${Object.keys(this.config.projects).join(', ')}`);
   }
@@ -1059,28 +1064,51 @@ export class Beckon {
     return res;
   }
 
-  // The connectors and MCP servers a run started with (from Claude Code's init event): what
-  // beckon desktop shows. For each one: its status, since when, and when it last worked, so a
-  // connector whose sign-in expired stands apart from one never set up.
+  // The connectors and MCP servers a run started with (from Claude Code's init event), for
+  // beckon desktop. They belong to the Claude account (claude.ai connectors, plugins, servers of
+  // this machine), so they are kept once, not per project; a server only some projects add
+  // (their MCP config or .mcp.json) lists those projects. For each one: its status, since when,
+  // and when it last worked, so a sign-in that expired stands apart from one never set up.
   noteConnections(project, servers) {
-    if (!project || !Array.isArray(servers)) return;
+    if (!Array.isArray(servers)) return;
     const now = this.now();
-    const before = new Map((this.state.connections[project]?.servers ?? []).map((s) => [s.name, s]));
-    const list = servers.filter((s) => typeof s?.name === 'string').map((s) => {
-      const old = before.get(s.name);
+    const byName = new Map((this.state.connections?.servers ?? []).map((s) => [s.name, s]));
+    for (const s of servers) {
+      if (typeof s?.name !== 'string') continue;
+      const old = byName.get(s.name);
+      const source = typeof s.source === 'string' ? s.source : old?.source ?? null;
+      const shared = ['claudeai', 'plugin', 'user'].includes(source);
+      const projects = shared ? undefined : [...new Set([...(old?.projects ?? []), project].filter(Boolean))].sort();
       const status = typeof s.status === 'string' ? s.status : 'unknown';
       // Still connecting when the run started: keep what was known.
-      if (status === 'pending' && old) return old;
-      return {
+      if (status === 'pending' && old) {
+        byName.set(s.name, { ...old, ...(projects ? { projects } : {}) });
+        continue;
+      }
+      byName.set(s.name, {
         name: s.name,
-        source: typeof s.source === 'string' ? s.source : null,
+        source,
         status,
         since: old?.status === status ? old.since : now,
         lastOk: status === 'connected' ? now : old?.lastOk ?? null,
-      };
-    });
-    this.state.connections[project] = { at: now, servers: list };
+        ...(projects ? { projects } : {}),
+      });
+    }
+    this.state.connections = { at: now, servers: [...byName.values()] };
     this.state.save();
+  }
+
+  // Who the runs are signed in as and when that sign-in runs out (claude auth status), checked
+  // at start and every half hour. When it has run out, nothing runs until someone signs in again.
+  async checkAccount() {
+    try {
+      const account = await this.readAccount({ bin: this.config.claudePath, env: childEnv(this.env, {}, { allowApiKey: this.config.allowApiKey }) });
+      if (!account) return;
+      this.state.account = { ...account, at: this.now() };
+      this.state.save();
+    } catch (e) {
+      this.log(`Could not read the Claude account: ${e.message}`);
+    }
   }
 
   // An agent's answer that ends with "@qa <task>" gives the thread to that agent, up to

@@ -56,6 +56,7 @@ svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .item.on{background:var(--sel);font-weight:500}
 .item:not(.on):hover{background:rgba(127,127,127,.08)}
 .count{font-size:11px;color:var(--mute);font-variant-numeric:tabular-nums;flex:none!important}
+.count.bad{color:#fff;background:var(--bad);border-radius:8px;padding:0 6px;font-weight:600;line-height:16px}
 .count.live{color:#fff;background:var(--ok);border-radius:8px;padding:0 6px;font-weight:600;line-height:16px}
 
 #main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
@@ -92,6 +93,7 @@ input::placeholder,textarea::placeholder{color:var(--faint)}
 
 /* content blocks */
 h2{font-size:13px;font-weight:600;margin:24px 0 8px;display:flex;align-items:center;gap:8px}
+.sub-h{font-size:12px;font-weight:600;color:var(--mute);margin:16px 0 6px;display:flex;align-items:center;gap:8px}
 h2:first-child{margin-top:0}
 h2 .link,h2 .btn{margin-left:auto;font-weight:400}
 .box{background:var(--box);border:.5px solid var(--box-line);border-radius:10px;box-shadow:var(--shadow)}
@@ -273,6 +275,7 @@ const ICONS = {
   sliders: '<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/><circle cx="5.5" cy="4.5" r="1.5" fill="currentColor"/><circle cx="10.5" cy="8" r="1.5" fill="currentColor"/><circle cx="7" cy="11.5" r="1.5" fill="currentColor"/>',
   doc: '<path d="M4.3 2h4.9l3 3v8.4c0 .4-.3.6-.6.6H4.3c-.4 0-.6-.2-.6-.6V2.6c0-.4.2-.6.6-.6z"/><path d="M9 2v3.2h3.2M5.8 8.2h4.4M5.8 10.7h4.4"/>',
   plus: '<path d="M8 3.2v9.6M3.2 8h9.6"/>',
+  user: '<circle cx="8" cy="5.6" r="2.7"/><path d="M2.8 13.6c.6-2.5 2.7-4 5.2-4s4.6 1.5 5.2 4"/>',
   restart: '<path d="M13 8.2A5 5 0 1 1 11.4 4.4"/><path d="M11.9 1.9v2.9H9"/>',
   back: '<path d="M10 3 5 8l5 5"/>',
   chev: '<path d="m6.5 3.5 4.5 4.5-4.5 4.5"/>',
@@ -362,7 +365,7 @@ async function render() {
     if (!ov.projectList.some((p) => p.name === page.p)) page = { v: 'overview' };
   }
   drawSide();
-  const r = { overview, project, usage, settings, log }[page.v] ?? overview;
+  const r = { overview, project, account, usage, settings, log }[page.v] ?? overview;
   if (my === seq) await r(my);
 }
 function header(title, sub, tools = [], back) {
@@ -406,6 +409,7 @@ function drawSide() {
     (ov?.projectList ?? []).map((p) => item('folder', p.name, { v: 'project', p: p.name },
       p.running ? h('span', { class: 'count live', title: `${p.running} đang chạy` }, p.running) : null)),
     h('div', { class: 'sec' }, 'beckon'),
+    item('user', 'Tài khoản', { v: 'account' }, accountBad() ? h('span', { class: 'count bad', title: 'cần xử lý' }, '!') : null),
     item('chart', 'Usage', { v: 'usage' }),
     item('sliders', 'Cài đặt', { v: 'settings' }),
     item('doc', 'Log', { v: 'log' }),
@@ -447,12 +451,15 @@ async function overview(my) {
       cell('Secret relay', WORD[o.relay.status] ?? o.relay.status, since(o.relay), STATE[o.relay.status] ?? ''),
       cell('Cấu hình', WORD[o.config.status] ?? o.config.status, o.config.status === 'rejected' ? 'xem Log' : since(o.config), STATE[o.config.status] ?? ''),
       (() => {
-        const all = Object.values(o.connections ?? {}).flatMap((c) => c.servers ?? []);
-        const bad = [...new Set(all.filter((s) => ['expired', 'failed'].includes(connKind(s))).map(connName))];
-        return cell('Kết nối', !all.length ? 'Chưa rõ' : bad.length ? `${bad.length} cần xử lý` : 'Ổn', bad.length ? bad.join(', ') : all.length ? `${new Set(all.filter((s) => s.status === 'connected').map((s) => s.name)).size} đang kết nối` : 'sau lần chạy tới', !all.length ? '' : bad.length ? 'bad' : 'ok');
+        const [cls, word] = accountState(o.account);
+        return cell('Claude', word, o.account?.plan ? `${PLAN[o.account.plan] ?? o.account.plan}${o.account.email ? ' · ' + o.account.email : ''}` : '', cls);
       })(),
-      cell('Bộ nhớ', d ? mb(d.treeRssKb) : '–', d ? `daemon ${mb(d.rssKb)} · app ${o.ui ? mb(o.ui.rssKb) : '?'}` : ''),
-      cell('CPU', d ? d.treeCpu.toFixed(1) + '%' : '–', d ? `${d.procs} tiến trình` : '')),
+      (() => {
+        const all = o.connections?.servers ?? [];
+        const bad = badConns();
+        return cell('Kết nối', !all.length ? 'Chưa rõ' : bad.length ? `${bad.length} cần xử lý` : 'Ổn', bad.length ? bad.join(', ') : all.length ? `${all.filter((s) => s.status === 'connected').length} đang kết nối` : 'sau lần chạy tới', !all.length ? '' : bad.length ? 'bad' : 'ok');
+      })(),
+      cell('Máy', d ? mb(d.treeRssKb) : '–', d ? `CPU ${d.treeCpu.toFixed(1)}% · ${d.procs} tiến trình · daemon ${mb(d.rssKb)} · app ${o.ui ? mb(o.ui.rssKb) : '?'}` : '')),
     h('h2', {}, 'Projects'),
     h('div', { class: 'cards' }, o.projectList.map((p) => h('button', { class: 'box card', onclick: () => go({ v: 'project', p: p.name }) },
       h('div', { class: 'who' }, h('div', { class: 'av f' }, icon('folder')),
@@ -465,7 +472,7 @@ async function overview(my) {
 }
 
 // ---- a project ----
-const SUBS = { agents: 'Agents', runs: 'Runs', conns: 'Kết nối', plan: 'Lịch & watch', settings: 'Cài đặt' };
+const SUBS = { agents: 'Agents', runs: 'Runs', plan: 'Lịch & watch', settings: 'Cài đặt' };
 async function project(my) {
   const name = page.p, sub = page.s ?? 'agents';
   const p = ov.projectList.find((x) => x.name === name);
@@ -502,9 +509,6 @@ async function project(my) {
     q.addEventListener('input', filter); filter();
     header(name, status, [h('div', { class: 'search' }, icon('search'), q), seg]);
     fill(view, h('div', { class: 'page' }, box));
-  } else if (sub === 'conns') {
-    header(name, status, [seg]);
-    fill(view, connPage(name));
   } else {
     await ensureConfig();
     if (my !== seq) return;
@@ -527,7 +531,7 @@ const connName = (s) => s.name.replace(/^claude\.ai /, '').replace(/^plugin:[^:]
 function connRow(s) {
   const kind = connKind(s);
   const fix = s.source === 'claudeai' ? 'kết nối lại ở claude.ai → Settings → Connectors' : 'kết nối lại: chạy claude trên máy này, gõ /mcp';
-  const meta = [SOURCE[s.source] ?? s.source,
+  const meta = [SOURCE[s.source] ?? s.source, s.projects?.length ? 'project ' + s.projects.join(', ') : null,
     kind === 'connected' ? 'kết nối từ ' + when(s.since) : null,
     kind === 'expired' ? 'hết hạn từ ' + when(s.since) : null,
     kind === 'expired' || kind === 'failed' ? (s.lastOk ? 'chạy được lần cuối ' + when(s.lastOk) : null) : null,
@@ -537,20 +541,48 @@ function connRow(s) {
     h('div', { class: 'main' }, h('div', { title: s.name }, connName(s)), h('div', { class: 'meta' }, meta)),
     h('div', { class: 'n' }, h('span', { class: 'chip ' + (kind === 'connected' ? 'ok' : kind === 'expired' || kind === 'failed' ? 'bad' : '') }, CONN[kind][1])));
 }
-function connPage(name) {
-  const c = ov.connections?.[name];
-  if (!c?.servers?.length) return h('div', { class: 'page' }, h('div', { class: 'box empty' }, 'Chưa có dữ liệu: danh sách hiện sau lần chạy tiếp theo của project này.'));
+// ---- account: the Claude sign-in the runs use, and its connectors ----
+const PLAN = { max: 'Max', pro: 'Pro', team: 'Team', enterprise: 'Enterprise', free: 'Free' };
+const daysLeft = (a) => (a?.loginExpiresAt ? Math.floor((a.loginExpiresAt - Date.now()) / 86400000) : null);
+function accountState(a) {
+  if (!a) return ['', 'Chưa rõ'];
+  if (!a.loggedIn) return ['bad', 'Chưa đăng nhập'];
+  const d = daysLeft(a);
+  if (d == null) return ['ok', 'Đã đăng nhập'];
+  if (d < 0) return ['bad', 'Đăng nhập đã hết hạn'];
+  return [d < 7 ? 'warn' : 'ok', d < 1 ? 'Hết hạn trong hôm nay' : `Còn ${d} ngày`];
+}
+const badConns = () => [...new Set((ov?.connections?.servers ?? []).filter((s) => ['expired', 'failed'].includes(connKind(s))).map(connName))];
+const accountBad = () => ['bad', 'warn'].includes(accountState(ov?.account)[0]) || badConns().length > 0;
+async function account(my) {
+  const o = await freshOv();
+  if (my !== seq) return;
+  const a = o.account;
+  const [cls, word] = accountState(a);
+  header('Tài khoản', a?.email ? `Claude · ${a.email}` : 'Tài khoản Claude của beckon');
+  fill(view, h('div', { class: 'page' },
+    h('div', { class: 'box strip' },
+      cell('Tài khoản Claude', a?.email ?? '–', a?.orgName ?? (a ? '' : 'beckon đọc lúc khởi động, rồi mỗi 30 phút')),
+      cell('Gói', a?.plan ? PLAN[a.plan] ?? a.plan : '–', a?.authMethod === 'claude.ai' ? 'đăng nhập bằng claude.ai' : a?.authMethod ?? ''),
+      cell('Đăng nhập', word, a?.loginExpiresAt ? 'hết hạn ' + when(a.loginExpiresAt) : '', cls)),
+    cls === 'bad' || cls === 'warn' ? h('p', { class: 'muted small' }, 'Khi đăng nhập hết hạn, mọi việc của beckon dừng. Đăng nhập lại trên máy chạy beckon: mở Terminal, chạy claude rồi gõ /login.') : null,
+    a?.at ? h('p', { class: 'muted small' }, 'Kiểm lúc ' + when(a.at) + '.') : null,
+    connSection()));
+}
+function connSection() {
+  const c = ov.connections;
+  if (!c?.servers?.length) return [h('h2', {}, 'Kết nối'), h('div', { class: 'box empty' }, 'Chưa có dữ liệu: danh sách hiện sau lần chạy tiếp theo.')];
   const by = {};
   for (const s of c.servers) (by[connKind(s)] ??= []).push(s);
   const sort = (l) => l.sort((a, b) => connName(a).localeCompare(connName(b)));
-  const group = (kind, title) => by[kind]?.length ? [h('h2', {}, title, h('span', { class: 'count' }, by[kind].length)), h('div', { class: 'box list' }, sort(by[kind]).map(connRow))] : null;
+  const group = (kind, title) => by[kind]?.length ? [h('h3', { class: 'sub-h' }, title, h('span', { class: 'count' }, by[kind].length)), h('div', { class: 'box list' }, sort(by[kind]).map(connRow))] : null;
   const slot = h('div');
-  const never = by.never?.length ? [h('h2', {}, 'Chưa kết nối', h('span', { class: 'count' }, by.never.length),
+  const never = by.never?.length ? [h('h3', { class: 'sub-h' }, 'Chưa kết nối', h('span', { class: 'count' }, by.never.length),
     h('button', { class: 'link', onclick: () => slot.replaceChildren(slot.childElementCount ? '' : h('div', { class: 'box list' }, sort(by.never).map(connRow))) }, 'Xem')), slot] : null;
-  return h('div', { class: 'page' },
-    h('p', { class: 'muted small' }, `Theo lần chạy gần nhất của ${name}, ${when(c.at)}. Claude Code chỉ báo trạng thái, không báo ngày hết hạn: kết nối hết hạn đăng nhập hiện ở mục đầu.`),
+  return [h('h2', {}, 'Kết nối'),
+    h('p', { class: 'muted small', style: 'margin:-4px 0 10px' }, `Connector và MCP server của tài khoản, theo lần chạy gần nhất (${when(c.at)}). Claude Code chỉ báo trạng thái, không báo ngày hết hạn: kết nối hết hạn đăng nhập hiện ở mục đầu.`),
     group('expired', 'Hết hạn, cần đăng nhập lại'), group('failed', 'Không chạy được'), group('pending', 'Đang kết nối'), group('other', 'Khác'),
-    group('connected', 'Đã kết nối'), never);
+    group('connected', 'Đã kết nối'), never];
 }
 
 // A tiny markdown view for reports: text is escaped first, then headings, lists, bold and code.
