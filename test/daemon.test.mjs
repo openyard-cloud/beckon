@@ -216,6 +216,29 @@ test('project rules ask too; harmless commands run without asking', async () => 
   await close();
 });
 
+test('looking into a folder outside the project waits for the button, once per folder and thread', async () => {
+  const { beckon, slack, done, close, home } = await setup();
+  const neighbour = tempDir('beckon-other-');
+  const first = mention(`RUN:ls ${neighbour}/src`);
+  await beckon.handleEvent(first);
+  await waitFor(() => approvalId(slack));
+  const ask = slack.posts().find((p) => p.text?.startsWith('Approval needed'));
+  assert.match(ask.text, /reaches outside the proj project \(.*beckon-other-/);
+  await beckon.handleInteractive(click('beckon_allow', approvalId(slack)));
+  await done();
+  assert.ok(slack.texts().includes(`ran ls ${neighbour}/src`));
+
+  const asks = () => slack.posts().filter((p) => p.text?.startsWith('Approval needed')).length;
+  const before = asks();
+  await beckon.handleEvent(msg({ text: `RUN:cat ${neighbour}/README.md`, thread_ts: first.ts }));
+  await done();
+  await beckon.handleEvent(msg({ text: `RUN:ls ${home}/apps`, thread_ts: first.ts }));
+  await done();
+  assert.equal(asks(), before, 'an allowed folder and the project itself do not ask again');
+  assert.ok(slack.texts().includes(`ran ls ${home}/apps`));
+  await close();
+});
+
 test('"Allow everything in this thread" stops later permission prompts in that thread only', async () => {
   const { beckon, slack, done, close } = await setup();
   const first = mention('PERM:ls -la');

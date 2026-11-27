@@ -192,7 +192,7 @@ Then `/invite @beckon` to that channel.
 
 ## Approvals
 
-Two kinds of requests come to Slack:
+Three kinds of requests come to Slack:
 
 1. **Always asked**, even in `bypassPermissions` mode and even when your settings allow the command:
    - a push to `main`, `master`, `production` or `release`, a force push, or a branch delete;
@@ -208,6 +208,8 @@ Two kinds of requests come to Slack:
    The full list is in [`src/policy.mjs`](src/policy.mjs). Add your own per project with `alwaysAsk`. Reading through a connector never asks, also under your own rules: tools named `get_…`, `list_…`, `search_…` and the like, and `execute_sql` with SQL that only reads. A rule with `"reads": true` asks for those too.
 
 2. **Permission prompts.** These are tool uses your permission mode and allow rules do not already cover. **Allow everything in this thread** stops these prompts for the rest of that thread. Always-asked actions still ask.
+
+3. **Looking outside the project.** An agent works on its own project only, and is told so. A file tool or command that names a path in a neighbouring folder (another repository next to the project, say `~/Projects/other` beside `~/Projects/pickcourt`) or in beckon's own data (`~/.beckon`: settings, tokens, other threads' worktrees) waits for Allow. One Allow covers that folder for the rest of the thread, and **Allow everything in this thread** covers these too. This catches paths written out in full; it is a guard against wandering off, not a sandbox.
 
 When a request is denied, Claude is told not to reach the same result another way. A request nobody answers within `approvalTimeoutMinutes` is denied.
 
