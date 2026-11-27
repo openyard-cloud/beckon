@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { join, isAbsolute, dirname, resolve } from 'node:path';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { checkAttachment, inTempFolder } from './attach.mjs';
+import { scan as defaultScan, newSince, isEmpty, describe as describeLeftovers, summary as leftoverSummary, stopProcesses } from './leftovers.mjs';
 import { homedir } from 'node:os';
 import { Progress } from './progress.mjs';
 import { TabTracker } from './tabs.mjs';
@@ -147,8 +148,10 @@ export class Beckon {
     secrets = null,
     secretScript = null,
     attachScript = null,
+    scanLeftovers = defaultScan,
+    stopLeftovers = stopProcesses,
   }) {
-    Object.assign(this, { config, slack, state, worktreesDir, nodePath, hookScript, env, log, runClaude, ensureWorktree, removeWorktree, runSetup, now, configFile, secrets, secretScript, attachScript });
+    Object.assign(this, { config, slack, state, worktreesDir, nodePath, hookScript, env, log, runClaude, ensureWorktree, removeWorktree, runSetup, now, configFile, secrets, secretScript, attachScript, scanLeftovers, stopLeftovers });
     this.configText = null;
     this.hook = null;
     this.botUserId = null;
@@ -847,6 +850,7 @@ export class Beckon {
       `- Stay inside the "${project.name}" project: look for answers in this worktree, the project's own notes and its connected services, never in other folders on this machine (other repositories, beckon or its settings). When people say "our site", "our app" or "the tool for this", they mean ${project.name}'s. If what they ask for is not in the project, say so and ask; reading outside it waits for the person's Allow button.`,
       '- Do the work yourself, all the way. Never hand the user a command to run, a button to click or a step to do by hand, not even as an alternative or a fallback: run it. This includes builds, releases, deploys, migrations and pushes, even where the repository notes say the owner usually does them by hand.',
       '- Close every browser tab or window you opened as soon as you are done with it, and always before your final message, also when the task failed. Prefer ways that open nothing: curl, gh and other CLIs, or headless Playwright, to read pages; Claude in Chrome tabs (closed with tabs_close) when those tools are available. Avoid `open <url>`; if you used it, close that tab afterwards (on macOS, with osascript, matching the exact URL you opened). Close headed browsers you launched. Never close tabs you did not open.',
+      '- Before your final message, also when the task failed, stop what you started that is still running: dev servers and other background processes, ports, Docker containers, iOS simulators and Android emulators. Keep one running only when the person asked for it, and say so in the final message. beckon checks this before you finish, and stops processes left in this worktree when the run ends.',
       '- People read your messages in Slack and cannot open files on this machine. Never point them to a file outside the repository (screenshots, logs, scripts, saved pages, /tmp paths): say what it shows instead. Delete the files you made only to check something before your final message. Share a file only when someone asks for it, and the way they ask.',
       '- Keep your context small: everything in it is read again at every step. Find code with grep -n and read only the lines you need (Read with offset and limit), not whole large files; keep command output short (head, tail, quiet flags). Hand a search that reads many files or pages to a subagent (the Agent tool, Explore for code) and keep only its conclusion. On screen, read the text or element tree first, and take a screenshot only when you need to see something, of that window or area rather than the whole screen.',
       '- You do not need to hold back risky steps: beckon sends deploys, releases, pushes to main branches, merges, migrations, publishing and similar actions to the user as an Allow button the moment you run them, and that button is the user\'s decision. The button also stands for notes in the repository or memory that say to get the owner\'s OK first (before tests against production, a release, a migration): run the step and let the button ask, instead of ending the turn to ask in text. If one is denied, do not reach the same result another way; say what is left undone. If the approval itself fails (for example beckon is not reachable), run the same command again once; if it fails again, stop and say so, and the user will reply to continue.',
@@ -894,6 +898,10 @@ export class Beckon {
       progress: new Progress({ cwd: t.worktree, startedAt: this.now() }),
       tabs: new TabTracker(),
       tabReminders: 0,
+      base: null, // what was running when the run started using tools
+      background: 0,
+      cleanupReminders: 0,
+      kept: null,
       progressTs: null,
       reply: null,
       status: 'working',
@@ -964,6 +972,7 @@ export class Beckon {
       clearInterval(run.ticker);
       clearTimeout(run.refreshTimer);
       this.denyApprovals(key, 'The run ended.');
+      await this.sweep(key, t, run).catch((e) => this.log(`Cleanup after ${key} failed: ${e.message}`));
       await this.finishRun(key, run).catch((e) => this.log(`Could not post the result in ${key}: ${e.message}`));
       if (run.status === 'done') await this.handOff(key, run.reply).catch((e) => this.log(`Hand-over in ${key} failed: ${e.message}`));
       this.running.delete(key);
@@ -1039,6 +1048,7 @@ export class Beckon {
           }, this.answerDelayMs ?? 5000).unref?.();
         }
         run.tabs?.push(e);
+        if (e.type === 'system' && e.subtype === 'background_tasks_changed') run.background = e.tasks?.length ?? 0;
         if (run.progress.push(e)) this.refresh(key);
         this.trackSubagent(key, run, project, e).catch((err) => this.log(`Subagent message in ${key} failed: ${err.message}`));
       },
@@ -1326,8 +1336,11 @@ export class Beckon {
   async onHook({ kind, thread: key, payload }) {
     const t = this.state.threads[key];
     const run = this.running.get(key);
-    if (kind === 'stop') return this.onStop(run);
+    if (kind === 'stop') return this.onStop(key, t, run);
     if (!t || !run) return { decision: 'deny', message: 'This beckon thread is not running.' };
+    // The first tool use: note what already runs, so what the run starts can be told apart.
+    if (kind === 'pre' && !run.base) run.base = this.scanRun(key, t).catch((e) => { this.log(`Could not look at what runs: ${e.message}`); return null; });
+    if (run.base) await run.base;
     const project = this.config.projects[t.project];
     const tool = payload?.tool_name ?? 'unknown tool';
     const input = payload?.tool_input ?? {};
@@ -1355,14 +1368,54 @@ export class Beckon {
 
   // Claude is about to end its turn. Tabs it opened in the browser and left open send it back to
   // close them, twice at most so a tab that will not close cannot keep the run alive.
-  onStop(run) {
+  async onStop(key, t, run) {
     const open = run?.tabs?.open() ?? [];
-    if (!open.length || run.tabReminders >= 2) return { decision: 'none' };
-    run.tabReminders++;
+    if (open.length && run.tabReminders < 2) {
+      run.tabReminders++;
+      return {
+        decision: 'block',
+        message: `Before finishing, close the browser tabs you opened in this run (tabId ${open.join(', ')}) with the Claude in Chrome tabs_close tool. Leave tabs you did not open alone.`,
+      };
+    }
+    // Servers, containers and simulators the run started. Not while subagents or background
+    // commands still work: they may be using them, and a later stop checks again.
+    const base = await run?.base;
+    if (!t || !base || run.background) return { decision: 'none' };
+    const left = newSince(base, await this.scanRun(key, t));
+    if (isEmpty(left)) return { decision: 'none' };
+    if (run.cleanupReminders >= 2) {
+      run.kept = left;
+      return { decision: 'none' };
+    }
+    run.cleanupReminders++;
     return {
       decision: 'block',
-      message: `Before finishing, close the browser tabs you opened in this run (tabId ${open.join(', ')}) with the Claude in Chrome tabs_close tool. Leave tabs you did not open alone.`,
+      message: `Before finishing, stop what this run started and no longer needs:\n${describeLeftovers(left)}\nKeep one running only if the person asked for it, and then say so in your final message. Leave alone anything you did not start. Processes left in this worktree are stopped by beckon when the run ends.`,
     };
+  }
+
+  scanRun(key, t) {
+    const skip = [this.hookScript, this.secretScript, this.attachScript].filter(Boolean);
+    return this.scanLeftovers({ dir: t.worktree, thread: key, env: this.env, skip });
+  }
+
+  // When the run ends: stop the processes it started and left in the worktree (unless Claude
+  // kept them after being reminded), and show on the card what else is still running.
+  async sweep(key, t, run) {
+    const base = await run.base;
+    if (!base) return;
+    const left = newSince(base, await this.scanRun(key, t));
+    const kept = new Set((run.kept?.all ?? []).map((p) => p.pid));
+    const keptOrUnder = (p) => kept.has(p.pid) || kept.has(p.ppid);
+    const stop = left.all.filter((p) => !keptOrUnder(p));
+    if (stop.length) {
+      await this.stopLeftovers(stop.map((p) => p.pid));
+      const top = left.processes.filter((p) => !keptOrUnder(p));
+      this.log(`Stopped what ${key} left running: ${leftoverSummary({ ...left, processes: top, containers: [], simulators: [], emulators: [] })}`);
+      run.progress.addTask('cleanup', `Stopped what the run left running: ${leftoverSummary({ ...left, processes: top, containers: [], simulators: [], emulators: [] })}`, 'complete');
+    }
+    const still = { ...left, processes: left.processes.filter(keptOrUnder) };
+    if (!isEmpty(still)) run.progress.addTask('left-running', `Still running after this run: ${leftoverSummary(still)}`, 'error');
   }
 
   // Claude sends a screenshot, a recording or a PDF to the thread (bin/beckon-attach.mjs). Only
@@ -1595,6 +1648,9 @@ export class Beckon {
       if (this.running.has(key) || t.worktreeRemoved || t.lastActive > cutoff) continue;
       const project = this.config.projects[t.project];
       if (!project) continue;
+      // Whatever still runs from this worktree goes with it.
+      const left = await this.scanLeftovers({ dir: t.worktree, thread: key, env: this.env, skip: [this.hookScript] }).catch(() => null);
+      if (left?.processes.length) await this.stopLeftovers(left.processes.map((p) => p.pid));
       const res = await this.removeWorktree({ repo: project.path, dir: t.worktree });
       if (res.removed) {
         t.worktreeRemoved = true;

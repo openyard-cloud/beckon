@@ -47,6 +47,7 @@ async function setup({ config: extra = {}, env: extraEnv = {}, withFile = false,
     },
     removeWorktree: async () => ({ removed: true }),
     configFile,
+    scanLeftovers: async () => ({ processes: [], containers: [], simulators: [], emulators: [] }),
     ...beckonOptions,
   });
   const hook = await startHookServer((body) => beckon.onHook(body));
@@ -941,6 +942,54 @@ test('beckon-attach sends images, videos and PDFs to the thread and deletes them
     await done();
     assert.match(slack.texts().filter((t) => t?.startsWith('attach:')).at(-1), /"status":"failed".*files:write/);
     assert.ok(existsSync(shot), 'a file that did not go is kept');
+  } finally {
+    await close();
+  }
+});
+
+test('a run is reminded to stop the servers, containers and simulators it started, and beckon stops processes it left', async () => {
+  const empty = { processes: [], containers: [], simulators: [], emulators: [] };
+  const claude = { pid: 100, ppid: 1, command: 'claude -p', ports: [] };
+  const dev = { pid: 200, ppid: 1, command: 'node next dev -p 3000', ports: ['3000'] };
+  const child = { pid: 201, ppid: 200, command: 'next-server', ports: [] };
+  const machine = (extra = {}) => ({ ...empty, processes: [claude], ...extra });
+  const withAll = machine({ processes: [claude, dev, child], containers: [{ id: 'abc123def4567890', label: 'pg (postgres:16)' }], simulators: [{ id: 'SIM-1', label: 'iPhone 16' }] });
+  let states = [];
+  const stopped = [];
+  const { beckon, slack, done, close } = await setup({
+    beckonOptions: {
+      scanLeftovers: async () => (states.length > 1 ? states.shift() : states[0]),
+      stopLeftovers: async (pids) => { stopped.push(...pids); },
+    },
+  });
+  try {
+    // Reminded once with what to stop; cleaned up; nothing for beckon to do.
+    states = [machine(), withAll, machine()];
+    await beckon.handleEvent(mention('LEFTOVERS'));
+    await done();
+    const first = slack.texts().find((t) => t?.startsWith('reminded'));
+    assert.match(first, /^reminded 1: Before finishing, stop what this run started/);
+    assert.match(first, /process 200 on port 3000: node next dev -p 3000 \(stop: kill 200\)/);
+    assert.ok(!/process 201|process 100/.test(first), 'children and what ran before are not listed');
+    assert.match(first, /docker stop abc123def456/);
+    assert.match(first, /xcrun simctl shutdown SIM-1/);
+    assert.deepEqual(stopped, []);
+
+    // Kept after two reminders (the person asked): beckon leaves it and the card says so.
+    states = [machine(), withAll];
+    await beckon.handleEvent(mention('LEFTOVERS again'));
+    await done();
+    assert.match(slack.texts().filter((t) => t?.startsWith('reminded')).at(-1), /^reminded 2:/);
+    assert.deepEqual(stopped, []);
+    assert.match(JSON.stringify(slack.posts().at(-1).blocks), /Still running after this run: port 3000 \(node\), container pg \(postgres:16\), simulator iPhone 16/);
+
+    // A process that shows up only after the last check is stopped by beckon, children too.
+    states = [machine(), machine(), machine({ processes: [claude, dev, child] })];
+    await beckon.handleEvent(mention('LEFTOVERS once more'));
+    await done();
+    assert.match(slack.texts().filter((t) => t?.startsWith('reminded')).at(-1), /^reminded 0:/);
+    assert.deepEqual(stopped.sort(), [200, 201]);
+    assert.match(JSON.stringify(slack.posts().at(-1).blocks), /Stopped what the run left running: port 3000 \(node\)/);
   } finally {
     await close();
   }
