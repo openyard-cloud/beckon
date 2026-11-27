@@ -6,7 +6,7 @@
 
 Run Claude Code from Slack, on your own machine, with your own Claude subscription.
 
-Mention `@beckon` with a task. It starts Claude Code in a fresh git worktree of the right repository, shows its steps live in the thread, and posts the answer there. Reply in the thread to keep going. When Claude wants to deploy, push to `main`, merge, run a migration or publish, the command waits in Slack for you to press **Allow** or **Deny**.
+Mention `@beckon` with a task. It starts Claude Code in a fresh git worktree of the right repository, shows its steps live in the thread, and posts the answer there. Reply in the thread to keep going; a reply while it works reaches the run right away (:speech_balloon:). When Claude wants to deploy, push to `main`, merge, run a migration or publish, the command waits in Slack for you to press **Allow** or **Deny**.
 
 ```
 #myapp
@@ -456,7 +456,6 @@ beckon runs the unmodified `claude` CLI under your own login, for your own work.
 ## Limits
 
 - Slack file attachments are not passed to Claude yet.
-- A new message during a run is queued and sent when the run finishes.
 - One machine per Slack app. Two beckon processes on the same app would both answer.
 
 ## License

@@ -6,7 +6,7 @@ import { FAKE_CLAUDE } from './helpers.mjs';
 test('first turn names the session, later turns resume it', () => {
   const settings = hookSettings({ nodePath: '/n o/node', hookScript: '/x/hook.mjs', timeoutSeconds: 3660 });
   const first = claudeArgs({ sessionId: 'S', resume: false, model: 'opus', permissionMode: 'acceptEdits', settings, appendPrompt: 'P', name: 'beckon: t' });
-  assert.deepEqual(first.slice(0, 4), ['-p', '--output-format', 'stream-json', '--verbose']);
+  assert.deepEqual(first.slice(0, 6), ['-p', '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json']);
   for (const [flag, value] of [['--session-id', 'S'], ['--name', 'beckon: t'], ['--model', 'opus'], ['--permission-mode', 'acceptEdits'], ['--disallowedTools', 'AskUserQuestion'], ['--append-system-prompt', 'P']]) {
     assert.equal(first[first.indexOf(flag) + 1], value, flag);
   }
@@ -36,6 +36,25 @@ test('streams events and returns the result', async () => {
   assert.equal(res.sessionId, 'abc');
   assert.equal(res.apiKeySource, 'none');
   assert.deepEqual(events, ['system', 'assistant', 'result']);
+});
+
+test('takes messages while it runs, and closes its input once nothing works in the background', async () => {
+  assert.equal(claudeArgs({ sessionId: 's' }).join(' ').includes('--input-format stream-json'), true);
+  let send;
+  const live = await runClaude({ bin: FAKE_CLAUDE, args: [], cwd: process.cwd(), env: process.env, prompt: 'LIVE', onInput: (s) => { send = s; }, onEvent: (e) => { if (e.type === 'assistant') send('stop here'); } });
+  assert.equal(live.text, 'heard: stop here');
+  assert.equal(send('too late'), false, 'no input after the run');
+  const accepted = [];
+  const results = [];
+  const bg = await runClaude({ bin: FAKE_CLAUDE, args: [], cwd: process.cwd(), env: process.env, prompt: 'BACKGROUND', onInput: (s) => { send = s; }, onEvent: (e) => {
+    if (e.type === 'result') results.push(e.result);
+    if (e.type === 'result' && e.result === 'started') accepted.push(send('and this'));
+  } });
+  assert.deepEqual(accepted, [true], 'input stays open while a subagent works');
+  assert.deepEqual(results, ['started', 'later: and this', 'all done']);
+  assert.equal(bg.text, 'all done');
+  const plain = await runClaude({ bin: FAKE_CLAUDE, args: [], cwd: process.cwd(), env: process.env, prompt: 'hello' });
+  assert.equal(plain.text, 'echo: hello', 'a run ends at its result');
 });
 
 test('reports a missing binary as an error instead of throwing', async () => {
