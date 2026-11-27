@@ -317,6 +317,8 @@ impl App {
             "threads": threads.len(),
             "projects": cfg["projects"].as_object().map(|o| o.len()).unwrap_or(0),
             "projectList": project_list(&cfg, &runs),
+            // per project: the connectors and MCP servers its last run saw, with their status
+            "connections": state["connections"].clone(),
             "schedules": cfg["schedules"].as_array().map(|a| a.len()).unwrap_or(0),
             "watches": cfg["watches"].as_array().map(|a| a.len()).unwrap_or(0),
             "log": lines[lines.len().saturating_sub(80)..].join("\n"),

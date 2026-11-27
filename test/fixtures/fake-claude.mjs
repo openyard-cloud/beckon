@@ -49,7 +49,7 @@ if (process.env.FAKE_CLAUDE_MISSING_SESSION && opt('--resume')) {
   process.exit(1);
 }
 
-emit({ type: 'system', subtype: 'init', model: 'fake', apiKeySource: 'none', cwd: process.cwd() });
+emit({ type: 'system', subtype: 'init', model: 'fake', apiKeySource: 'none', cwd: process.cwd(), mcp_servers: process.env.FAKE_MCP_SERVERS ? JSON.parse(process.env.FAKE_MCP_SERVERS) : [] });
 
 function runHook(event, payload) {
   const entry = settings.hooks?.[event]?.[0]?.hooks?.[0];
