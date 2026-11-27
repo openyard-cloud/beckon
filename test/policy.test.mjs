@@ -59,12 +59,41 @@ test('asks before deploys and production changes', () => {
 });
 
 test('asks before merges, releases, publishing and direct database access', () => {
-  for (const c of ['gh pr merge 12 --squash', 'gh release create v1.0.0', 'gh api repos/o/r/issues -X POST -f title=x', 'npm publish', 'pnpm publish --access public', 'docker push me/app', 'psql "$DATABASE_URL" -c "select 1"', 'sudo rm x', 'rm -rf ~/Projects', 'rm -rf /tmp/x', 'rm -r ../other']) {
+  for (const c of ['gh pr merge 12 --squash', 'gh release create v1.0.0', 'gh api repos/o/r/issues -X POST -f title=x', 'npm publish', 'pnpm publish --access public', 'docker push me/app', 'psql "$DATABASE_URL" -c "select 1"', 'sudo rm x', 'rm -rf ~/Projects', 'rm -rf /tmp', 'rm -rf /tmp/../Users/me', 'rm -rf /tmp/x ~/Projects', 'rm -rf "/Users/me"', 'rm -r ../other']) {
     assert.ok(bash(c), c);
   }
-  for (const c of ['gh pr create --fill', 'gh pr view 3', 'gh api repos/o/r/pulls', 'npm test', 'rm -rf node_modules dist', 'rm file.txt']) {
+  for (const c of ['gh pr create --fill', 'gh pr view 3', 'gh api repos/o/r/pulls', 'npm test', 'rm -rf node_modules dist', 'rm file.txt', 'rm -rf /tmp/x /private/tmp/y', 'rm -rf "/var/folders/5y/T/tmp.X"']) {
     assert.equal(bash(c), null, c);
   }
+});
+
+test('text a command only carries is not taken for a command', () => {
+  // Written into files, a sed script or a PR body: data.
+  for (const c of [
+    "cat > /tmp/pr.md <<'EOF'\n## Deploy\nnpx wrangler secret put KEY\nwrangler deploy\nEOF\ngh pr create --body-file /tmp/pr.md",
+    `sed -i '' 's#"cf:deploy": "a"#"cf:deploy": "next build && wrangler deploy"#' package.json`,
+    'gh pr create --title x --body "Run: git push origin main; vercel --prod"',
+    "cat > /tmp/g.sh <<'EOF'\nrm -rf /Users/me/x\nEOF",
+    'ls # then wrangler deploy',
+    "python3 - <<'EOF'\np='notes.md'\ns=open(p).read()+\"\\nSet it with `... | npx wrangler secret put KEY` (no deploy needed).\\n\"\nopen(p,'w').write(s)\nEOF",
+    "python3 - <<'EOF'\nsub('README.md', \"\"\"Deploy: Vercel.\"\"\", \"\"\"Deploy: `pnpm cf:deploy && wrangler deploy`.\"\"\")\nEOF",
+  ]) assert.equal(bash(c), null, c);
+  // Run as code, or quoted arguments of a real command: still asks.
+  for (const c of [
+    "python3 - <<'EOF'\nimport os\nos.system('x')\nEOF\nwrangler deploy",
+    "bash <<'EOF'\nwrangler deploy\nEOF",
+    "sh -c 'cd app && wrangler deploy'",
+    `node -e 'require("child_process").execSync("x")' && vercel --prod`,
+    'echo "$(wrangler deploy)"',
+    'npx vercel "--prod"',
+    "ssh box 'fly deploy'",
+  ]) assert.ok(bash(c), c);
+});
+
+test('project rules see the same command text', () => {
+  const rule = [{ tool: '^Bash$', match: String.raw`\bplaywright\s+test\b`, label: 'e2e' }];
+  assert.ok(bash('pnpm exec playwright test tests/e2e', rule));
+  assert.equal(bash("cat > /tmp/c.mjs <<'EOF'\nimport { chromium } from 'playwright';\nEOF\nnode /tmp/c.mjs", rule), null);
 });
 
 test('asks before connector actions that change something', () => {

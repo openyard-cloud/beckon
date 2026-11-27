@@ -7,10 +7,11 @@ import { join, relative, resolve } from 'node:path';
 
 const ARGS = String.raw`[^;&|\n]*`;
 
-// A program in command position: at the start, after ; && || | ( or $(, or after a runner such
-// as npx or bundle exec, with optional VAR=value assignments in front. Mentions inside paths,
-// grep patterns or commit messages do not count.
-const AT = String.raw`(?:^|[;&|(\n]\s*|\$\(\s*|\b(?:npx|bunx|pnpm\s+(?:dlx|exec)|yarn|bundle\s+exec|sudo|time|env)\s+(?:-\S+\s+)*)(?:\w+=\S*\s+)*`;
+// A program in command position: at the start, after ; && || | ( or $(, with optional VAR=value
+// assignments and runners such as npx or bundle exec in front. Mentions inside paths, grep
+// patterns or commit messages do not count, and neither does "npx wrangler" in a sentence.
+const RUNNER = String.raw`(?:npx|bunx|pnpm\s+(?:dlx|exec)|yarn|bundle\s+exec|sudo|time|env)\s+(?:-\S+\s+)*`;
+const AT = String.raw`(?:^|[;&|(\n]\s*|\$\(\s*)(?:\w+=\S*\s+)*(?:${RUNNER})*(?:\w+=\S*\s+)*`;
 const cmd = (name) => `${AT}(?:${name})(?:@\\S+)?\\b`;
 
 export const DEFAULT_RULES = [
@@ -70,7 +71,8 @@ export const DEFAULT_RULES = [
   {
     label: 'run as root or delete outside the worktree',
     tool: '^Bash$',
-    match: String.raw`(?:^|[;&|(\n]\s*)sudo\b|${cmd('rm')}${ARGS}(\s-[a-zA-Z]*[rR][a-zA-Z]*|\s--recursive)\b${ARGS}\s("|')?(\/|~|\$HOME|\.\.)`,
+    // Temporary folders (/tmp, /private/tmp, /var/folders) do not count: agents clean up there.
+    match: String.raw`(?:^|[;&|(\n]\s*)sudo\b|${cmd('rm')}${ARGS}(\s-[a-zA-Z]*[rR][a-zA-Z]*|\s--recursive)\b${ARGS}\s("|')?(?!(?:\/tmp|\/private\/tmp|\/var\/folders)\/(?![^\s"']*\.\.)[^\s"'/])(\/|~|\$HOME|\.\.)`,
   },
   {
     label: 'a connector action that changes something',
@@ -173,8 +175,84 @@ export function inputText(toolName, input) {
   return JSON.stringify(input);
 }
 
+// Programs that run the text they are given: a heredoc fed to one of them is code, not data.
+const INTERPRETER = /(^|[\s;&|(])(python[\d.]*|node|bun|deno|ruby|perl|php|osascript|sh|bash|zsh|fish|dash|psql|mysql|sqlite3|swift|lua|expect|awk|gawk|ssh)\b/;
+// Commands that run a quoted string as commands: sh -c '...', eval, ssh host '...', node -e '...'.
+const RUNS_QUOTED = /(^|[\s;&|(])(sh|bash|zsh|fish|dash|eval|ssh|su|xargs|watch|parallel|source)\s|(^|[\s;&|(])(python[\d.]*|node|bun|deno|ruby|perl|php|osascript)\b[^;&|\n]*\s-[a-zA-Z]*[ce]\b/;
+
+const SHELL = /(^|[\s;&|(])(sh|bash|zsh|fish|dash|ssh|osascript|expect)\b/;
+
+// String literals in a script (Python, JavaScript, Ruby...): '...', "...", """...""", `...`,
+// with ; & | ( ) and line breaks inside them turned into spaces.
+function calmStrings(code) {
+  let out = '';
+  for (let i = 0; i < code.length;) {
+    const q = code.startsWith('"""', i) ? '"""' : code.startsWith("'''", i) ? "'''" : /['"`]/.test(code[i]) ? code[i] : null;
+    if (!q) { out += code[i++]; continue; }
+    let j = i + q.length;
+    while (j < code.length && !code.startsWith(q, j)) j += code[j] === '\\' ? 2 : 1;
+    out += code.slice(i, j + q.length).replace(/[;&|()\n`]/g, ' ');
+    i = j + q.length;
+  }
+  return out;
+}
+
+/** A Bash command with the text it only carries as data made harmless for matching: heredoc bodies
+ *  written to a file or sent to a program that does not run them (cat > x <<'EOF', gh pr create
+ *  --body-file -), and comments, are dropped; inside quotes, ; & | ( ) and line breaks become
+ *  spaces, so a deploy command quoted in a sed script or a PR body no longer looks like a command.
+ *  The words stay, so a quoted argument (rm -rf "/Users/x") still counts. Quotes are left alone when
+ *  the command runs quoted text (sh -c, eval, ssh, node -e), and so are double-quoted strings with
+ *  $(...) or backticks in them. */
+export function commandOnly(command) {
+  const lines = String(command).split('\n');
+  const kept = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    kept.push(line);
+    for (const m of line.matchAll(/<<(-?)\s*(['"]?)([\w.-]+)\2/g)) {
+      const feeds = line.slice(0, m.index).split(/&&|\|\||[;|]/).pop();
+      const code = INTERPRETER.test(feeds);
+      const body = [];
+      while (++i < lines.length && (m[1] ? lines[i].trim() : lines[i]) !== m[3]) body.push(lines[i]);
+      // A shell runs every line; a script in another language (python3 - <<EOF) runs its code,
+      // and the strings in it are text, even with backticks in them.
+      if (code) kept.push(SHELL.test(feeds) ? body.join('\n') : calmStrings(body.join('\n')));
+      if (i < lines.length) kept.push(lines[i]);
+    }
+  }
+  const text = kept.join('\n');
+  const runsQuoted = RUNS_QUOTED.test(text);
+  const calm = (s) => s.replace(/[;&|()\n`]/g, ' ');
+  const code = [];
+  let out = '';
+  for (let i = 0; i < text.length;) {
+    const c = text[i];
+    if (c === '\\') { out += text.slice(i, i + 2); i += 2; continue; }
+    if (c === '#' && (i === 0 || /\s/.test(text[i - 1]))) {
+      const end = text.indexOf('\n', i);
+      i = end < 0 ? text.length : end;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) j += c === '"' && text[j] === '\\' ? 2 : 1;
+      const quoted = text.slice(i, j + 1);
+      const live = runsQuoted || (c === '"' && /\$\(|`/.test(quoted));
+      out += live ? quoted : calm(quoted);
+      // Text a shell will run (ssh box 'fly deploy') is also checked as commands of its own.
+      if (runsQuoted) code.push(quoted.slice(1, -1));
+      i = j + 1;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return [out, ...code].join('\n');
+}
+
 export function matchRule(toolName, input, extraRules = []) {
-  const text = inputText(toolName, input);
+  const text = toolName === 'Bash' ? commandOnly(inputText(toolName, input)) : inputText(toolName, input);
   // Reading through a connector never asks, also under a project rule such as "every Supabase
   // tool", unless that rule sets "reads": true (for data that must not even be read unasked).
   const reads = connectorReads(toolName, input);
