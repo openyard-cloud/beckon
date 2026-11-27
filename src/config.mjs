@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
+import { RULE_IDS } from './policy.mjs';
 
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions', 'dontAsk'];
 
@@ -115,6 +116,11 @@ export function validateConfig(raw) {
           errors.push(`${where}: a regex string or { "tool", "match", "label" }`);
         }
       }
+      // Rules from the default list this project runs without asking, by id (src/policy.mjs).
+      const autoAllow = p.autoAllow ?? [];
+      if (!isStringArray(autoAllow) || autoAllow.some((id) => !RULE_IDS.includes(id))) {
+        errors.push(`${at}.autoAllow: a list of rule ids, from ${RULE_IDS.join(', ')}`);
+      }
       for (const key of ['baseBranch', 'model', 'setup', 'instructions', 'mcpConfig']) {
         if (p[key] !== undefined && typeof p[key] !== 'string') errors.push(`${at}.${key}: must be a string`);
       }
@@ -131,6 +137,7 @@ export function validateConfig(raw) {
         model: p.model ?? null,
         permissionMode,
         alwaysAsk: rules,
+        autoAllow: isStringArray(autoAllow) ? autoAllow.filter((id) => RULE_IDS.includes(id)) : [],
         setup: p.setup ?? null,
         instructions: p.instructions ?? null,
         mcpConfig: typeof p.mcpConfig === 'string' ? expandHome(p.mcpConfig) : null,
