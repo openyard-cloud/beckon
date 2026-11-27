@@ -384,8 +384,9 @@ test('an answer given while subagents still work is posted before the run ends',
     beckon.answerDelayMs = 50;
     const m = mention('BACKGROUND');
     await beckon.handleEvent(m);
-    await waitFor(() => [...beckon.running.values()][0]?.send);
+    const run = await waitFor(() => [...beckon.running.values()][0]?.send && [...beckon.running.values()][0]);
     await new Promise((r) => setTimeout(r, 200));
+    run.status = 'waiting'; // as while a secret or an Allow button is pending
     await beckon.handleEvent(msg({ text: 'how is it going?', thread_ts: m.ts }));
     await done();
     const texts = slack.texts();
