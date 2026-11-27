@@ -17,7 +17,7 @@ export function hookSettings({ nodePath, hookScript, timeoutSeconds, contextWind
   };
 }
 
-export function claudeArgs({ sessionId, resume, model, permissionMode, settings, appendPrompt, name, mcpConfig, agent, pluginDirs = [] }) {
+export function claudeArgs({ sessionId, resume, model, permissionMode, settings, appendPrompt, name, mcpConfig, agent, agents = null, pluginDirs = [] }) {
   // Input as stream-json too: messages written to stdin while the run works reach it mid-turn.
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json'];
   if (resume) args.push('--resume', sessionId);
@@ -27,6 +27,8 @@ export function claudeArgs({ sessionId, resume, model, permissionMode, settings,
   }
   // A project agent: Claude Code runs the session as that agent (its prompt, tools and model),
   // with the agent's own skills loaded as plugins for this run only.
+  // Agents beckon defines itself (name -> { description, prompt, model }), on top of the files.
+  if (agents && Object.keys(agents).length) args.push('--agents', JSON.stringify(agents));
   if (agent) args.push('--agent', agent);
   for (const dir of pluginDirs) args.push('--plugin-dir', dir);
   if (model) args.push('--model', model);

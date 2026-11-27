@@ -19,6 +19,9 @@ const GC_MS = 6 * 60 * 60 * 1000;
 const STOP_WORDS = /^(stop|cancel|abort)[.!]*$/i;
 const PROJECT_PREFIX = /^([a-z0-9][a-z0-9._-]*):\s*/i;
 const AGENT_TAG = /^@([a-z0-9][a-z0-9_-]*)\b[:,]?\s*/i;
+// Team members' work kept per thread for beckon desktop: the last tasks, and each report's size.
+const TEAM_KEEP = 40;
+const TEAM_REPORT_MAX = 20_000;
 
 const DEFAULT_WATCH_PROMPT = [
   'A monitoring alert was just posted. Find out what went wrong and why: read the logs, errors and recent deploys of the service it names (with the CLIs and connectors you have), and the code involved.',
@@ -148,9 +151,6 @@ export class Beckon {
     this.hook = null;
     this.botUserId = null;
     this.botId = null;
-    // Agents' own Slack apps: name -> { name, slack, botUserId, botId }, and the DMs each one owns.
-    this.apps = new Map();
-    this.dmApps = new Map();
     this.teamUrl = null;
     this.channelProjects = new Map();
     this.channelIds = new Map();
@@ -309,32 +309,11 @@ export class Beckon {
   }
 
   // `as`: an agent's name and icon (needs chat:write.customize; without it, beckon's own).
-  // An agent's own Slack app, if it has one that is connected.
-  appOf(agent) {
-    return (agent?.slackApp && this.apps.get(agent.slackApp)) || null;
-  }
-
-  // The app that can post in this conversation: the one a DM belongs to, else the agent's own app,
-  // else beckon's.
-  slackFor(channel, agent = null) {
-    const dm = this.dmApps.get(channel);
-    if (dm) return this.apps.get(dm)?.slack ?? this.slack;
-    return this.appOf(agent)?.slack ?? this.slack;
-  }
-
-  async addApp(name, slack) {
-    const auth = await slack.call('auth.test');
-    this.apps.set(name, { name, slack, botUserId: auth.user_id, botId: auth.bot_id ?? null });
-    return auth;
-  }
-
   async post(channel, threadTs, text, blocks, as = null) {
     const body = { channel, text, unfurl_links: false, unfurl_media: false };
     if (threadTs) body.thread_ts = threadTs;
     if (blocks) body.blocks = blocks;
-    const client = this.slackFor(channel, as);
-    if (client !== this.slack) return client.call('chat.postMessage', body);
-    if (as && as.slackApp !== 'MAIN' && !this.noAgentIdentity) {
+    if (as && !this.noAgentIdentity) {
       body.username = as.displayName;
       if (as.icon.startsWith(':')) body.icon_emoji = as.icon;
       else body.icon_url = as.icon;
@@ -360,7 +339,7 @@ export class Beckon {
 
   async react(channel, ts, name, as = null) {
     try {
-      await this.slackFor(channel, as).call('reactions.add', { channel, timestamp: ts, name });
+      await this.slack.call('reactions.add', { channel, timestamp: ts, name });
     } catch {
       /* reactions are a courtesy */
     }
@@ -368,10 +347,8 @@ export class Beckon {
 
   // ---- incoming Slack events ----
 
-  // `via`: the agent app whose connection delivered the event (null: beckon's own).
-  async handleEvent(ev, via = null) {
+  async handleEvent(ev) {
     if (ev.type !== 'app_mention' && ev.type !== 'message') return;
-    if (via && (ev.channel_type === 'im' || String(ev.channel).startsWith('D'))) this.dmApps.set(ev.channel, via);
     if (await this.handleWatched(ev)) return;
     if (ev.bot_id || !ev.user || ev.user === this.botUserId) return;
     // Slack on a phone can insert the app's bot ID instead of its user ID when @beckon is picked
@@ -383,19 +360,7 @@ export class Beckon {
     this.seen.add(seenKey);
     if (this.seen.size > 2000) this.seen.delete(this.seen.values().next().value);
 
-    // A mention of an agent's own app (`@Beckon-QA`) is a task for that agent; the first one wins.
-    let tagApp = null;
-    let tagAt = Infinity;
-    for (const app of this.apps.values()) {
-      for (const id of [app.botUserId, app.botId].filter(Boolean)) {
-        const re = new RegExp(`<@${id}(\\|[^>]*)?>`, 'g');
-        const at = String(ev.text ?? '').search(re);
-        if (at >= 0 && at < tagAt) { tagAt = at; tagApp = app.name; }
-        ev.text = String(ev.text ?? '').replace(re, ' ').replace(/^\s+/, '');
-      }
-    }
-    if (!tagApp && via && this.dmApps.get(ev.channel) === via) tagApp = via;
-    const mentioned = ev.type === 'app_mention' || String(ev.text ?? '').includes(`<@${this.botUserId}>`) || !!tagApp;
+    const mentioned = ev.type === 'app_mention' || String(ev.text ?? '').includes(`<@${this.botUserId}>`);
     const isDM = ev.channel_type === 'im' || String(ev.channel).startsWith('D');
     const key = ev.thread_ts ? `${ev.channel}:${ev.thread_ts}` : null;
     const known = key && this.state.threads[key];
@@ -425,8 +390,7 @@ export class Beckon {
       known.leadRun = false;
       let rest = text;
       let switched = false;
-      const appAgent = tagApp && this.agentOnApp(known.project, tagApp);
-      const named = appAgent ? { agent: appAgent, rest: text } : this.agentPrefix(known.project, text);
+      const named = this.agentPrefix(known.project, text);
       if (named) {
         rest = named.rest;
         if (known.agent !== named.agent) {
@@ -456,9 +420,6 @@ export class Beckon {
     } else {
       projectName = this.channelProjects.get(ev.channel) ?? (isDM ? this.config.defaultProject : null);
     }
-    if (tagApp && (!projectName || !this.agentOnApp(projectName, tagApp))) {
-      projectName = Object.keys(this.config.projects).find((p) => this.agentOnApp(p, tagApp)) ?? projectName;
-    }
     if (!projectName) {
       const names = Object.keys(this.config.projects).map((n) => `\`${n}\``).join(', ');
       const first = Object.keys(this.config.projects)[0];
@@ -468,8 +429,7 @@ export class Beckon {
 
     // The agent: named at the start ("qa: ..."), else the channel's agent, else the project's default.
     const project = this.config.projects[projectName];
-    const appAgent = tagApp && this.agentOnApp(projectName, tagApp);
-    const named = appAgent ? { agent: appAgent, rest: body } : this.agentPrefix(projectName, body);
+    const named = this.agentPrefix(projectName, body);
     let agent = null;
     if (named) {
       agent = named.agent;
@@ -487,23 +447,6 @@ export class Beckon {
     }
     await this.react(ev.channel, ev.ts, 'eyes', project.agents?.[agent]);
     return this.startThread({ channel: ev.channel, threadTs: replyTs, project: projectName, agent, text: prompt, title: body, user: ev.user, ts: ev.ts });
-  }
-
-  // "qa: ..." at the start of a message, where qa is one of the project's agents (case ignored).
-  agentOnApp(projectName, appName) {
-    const agents = this.config.projects[projectName]?.agents ?? {};
-    return Object.values(agents).find((a) => a.slackApp === appName)?.name ?? null;
-  }
-
-  // "@qa" in an agent's answer becomes a real mention of that agent's own app, when it has one.
-  linkAgents(text, project) {
-    let out = text;
-    for (const a of Object.values(project?.agents ?? {})) {
-      const app = this.appOf(a);
-      if (!app) continue;
-      out = out.replace(new RegExp(`(^|[\\s(>*_])@${a.name}\\b`, 'gi'), `$1<@${app.botUserId}>`);
-    }
-    return out;
   }
 
   // "@qa ..." (a tag) works anywhere a name prefix does; `tagOnly` accepts only the tag.
@@ -569,7 +512,7 @@ export class Beckon {
 
   async threadContext(channel, threadTs, beforeTs) {
     try {
-      const res = await this.slackFor(channel).call('conversations.replies', { channel, ts: threadTs, limit: 50 });
+      const res = await this.slack.call('conversations.replies', { channel, ts: threadTs, limit: 50 });
       const lines = [];
       for (const m of res.messages ?? []) {
         if (Number(m.ts) >= Number(beforeTs)) break;
@@ -919,14 +862,13 @@ export class Beckon {
       if (project.lead && others.length) {
         if (agent.name === project.lead) {
           const team = others.map((n) => `${n} (subagent_type "${project.agents[n].agent}"${project.agents[n].description ? `: ${project.agents[n].description}` : ''})`).join(', ');
-          lines.push(`- You lead this project's team: ${team}. A person gives you the work; you plan it and get it done through the team, without asking the person to pass anything on. First decide who the work really needs: only the members whose role it calls for (often one or two; a question you can answer yourself needs nobody), never everyone by default. Then decide what runs at the same time: tasks that do not depend on each other and do not edit the same files run together; the rest in order. Before you start anyone, write that plan in one or two lines (who, together or in order, and why); it is posted to the thread. Give each task to a member with the Agent tool and its subagent_type, with everything it needs in the prompt: the request, the spec or files, what to do and what to report (and that risky actions wait for the person's Allow button in Slack, which is normal; that its report is posted to Slack, where nobody can open files on this machine, so it names no screenshots or temporary files and deletes the ones it made only for checking). Start tasks that do not depend on each other in the same message, so they run at the same time; they share this worktree, so never run two at once that edit the same files, and start a task that needs another's result (testing after the code) once that result is in. Each member's report is posted to the Slack thread under its own name. Check the reports, give out what comes next (the fixes for what testing found, then testing again), and when the work is done and checked, write the final report for the person, with a line on who worked on it. Do your own part (understanding the request, specs, decisions, numbers) yourself, and leave code, design and testing to the team. Ask the person only for decisions that are really theirs: then end the turn with the question.`);
+          lines.push(`- You lead this project's team: ${team}. A person gives you the work; you plan it and get it done through the team, without asking the person to pass anything on. First decide who the work really needs: only the members whose role it calls for (often one or two; a question you can answer yourself needs nobody), never everyone by default. Then decide what runs at the same time: tasks that do not depend on each other and do not edit the same files run together; the rest in order. Before you start anyone, write that plan in one or two lines (who, together or in order, and why). Give each task to a member with the Agent tool and its subagent_type, with everything it needs in the prompt: the request, the spec or files, what to do and what to report (and that risky actions wait for the person's Allow button in Slack, which is normal; that its report comes back to you, and names no screenshots or temporary files, which nobody can open, and that it deletes the ones it made only for checking). Start tasks that do not depend on each other in the same message, so they run at the same time; they share this worktree, so never run two at once that edit the same files, and start a task that needs another's result (testing after the code) once that result is in. Only your own messages reach Slack: the person sees each member's line on your progress card while it works, and its full report in beckon desktop. So your final report carries what matters from each member's report. Check the reports, give out what comes next (the fixes for what testing found, then testing again), and when the work is done and checked, write the final report for the person, with a line on who worked on it. Do your own part (understanding the request, specs, decisions, numbers) yourself, and leave code, design and testing to the team. Ask the person only for decisions that are really theirs: then end the turn with the question.`);
         } else if (String(user).startsWith('agent:')) {
           lines.push(`- You are on a team led by @${project.lead}, which gave you this task (above). Do it fully, then report what you did, what you found and what is left. Do not tag other agents: @${project.lead} reads your report and decides what comes next. If something needs a decision only a person can make, say so in your report.`);
         } else {
           lines.push(`- Your team is led by @${project.lead}; the others are ${list}. This task came straight from a person: do it and report to them. Do not tag other agents unless the person asks you to.`);
         }
       } else if (others.length) {
-        // (each tag shows in Slack as a real mention of that agent when it has its own app)
         lines.push(`- The project's other agents work in the same Slack channel: ${list}. People give one a task by tagging it, like "@${others[0]} ...". To hand the work on when the next step belongs to another role, end your final message with one line that starts with the tag and says what to do, like "@${others[0]} check the booking flow in PR #12". beckon then gives that agent this thread, worktree and conversation. Hand on only when that role is really needed next; never hand back and forth, and if a person must decide something, ask them instead of tagging an agent.`);
       }
     }
@@ -961,7 +903,7 @@ export class Beckon {
     try {
       const first = await this.post(t.channel, t.threadTs, 'Working…', this.progressBlocks(key, run), this.agentOf(t, project));
       run.progressTs = first.ts;
-      run.slack = this.slackFor(t.channel, this.agentOf(t, project));
+      run.slack = this.slack;
       run.ticker = setInterval(() => this.refresh(key), 30_000);
       run.ticker.unref?.();
 
@@ -1046,10 +988,16 @@ export class Beckon {
         run.progress.addTask(`skills:${dir}`, `Skills folder ${dir} of agent ${agent.name} is not in this worktree`, 'error');
       }
     }
+    // Agents defined in beckon's config (with a prompt): this one, and for a lead its whole team.
+    const defined = {};
+    for (const a of agent && project.lead === agent.name ? Object.values(project.agents) : agent ? [agent] : []) {
+      if (a.prompt) defined[a.agent] = { description: a.description || a.name, prompt: a.prompt, ...(a.model ? { model: a.model } : {}) };
+    }
     const args = claudeArgs({
       sessionId: t.sessionId,
       resume: t.started,
       agent: agent?.agent,
+      agents: defined,
       pluginDirs,
       model: agent?.model ?? project.model,
       permissionMode: agent?.permissionMode ?? project.permissionMode,
@@ -1077,7 +1025,7 @@ export class Beckon {
         // reply anyway. A run waiting for a button or a secret is still running.
         if (e.type === 'result' && e.result && run.heard) {
           run.heard = false;
-          const answer = this.linkAgents(e.result.trim(), project);
+          const answer = e.result.trim();
           setTimeout(() => {
             if (this.running.get(key) !== run || !['working', 'waiting'].includes(run.status)) return;
             for (const piece of chunkMarkdown(answer)) {
@@ -1121,37 +1069,24 @@ export class Beckon {
     }
   }
 
-  // A project agent started as a subagent in this run (the lead giving it a task) gets a message
-  // of its own in the thread, under its own name: "working on ..." while it runs, then its report.
-  // Members started together are announced first, in one message from the lead.
+  // A project agent started as a subagent in this run (the lead giving it a task) gets a line on
+  // the run's progress card, and a record in the thread (t.team) with its full report, which
+  // beckon desktop shows. Nothing of it is posted to Slack on its own.
   async trackSubagent(key, run, project, e) {
     const t = this.state.threads[key];
     run.subs ??= new Map();
-    // The lead's own words before it starts members: shown with the plan.
-    if (e.type === 'assistant' && !e.parent_tool_use_id) {
-      const text = (e.message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
-      if (text) run.leadText = text;
-      return;
-    }
     if (e.type === 'system' && e.subtype === 'task_started' && e.subagent_type && e.tool_use_id) {
       const agent = Object.values(project?.agents ?? {}).find((a) => a.agent === e.subagent_type || a.name === e.subagent_type);
       if (!agent) return;
       const sub = { agent, description: e.description || e.subagent_type, taskId: e.task_id ?? null, text: '' };
       run.subs.set(e.tool_use_id, sub);
-      // Members started within a moment of each other run together: one plan message for them.
-      if (!run.batch) {
-        const batch = { subs: [], first: !run.planned };
-        run.planned = true;
-        batch.ready = new Promise((resolve) => setTimeout(() => {
-          if (run.batch === batch) run.batch = null;
-          this.postPlan(t, project, batch, run.leadText).catch(() => {}).finally(resolve);
-          run.leadText = '';
-        }, 1500));
-        run.batch = batch;
-      }
-      run.batch.subs.push(sub);
-      const ready = run.batch.ready;
-      sub.posted = ready.then(() => this.post(t.channel, t.threadTs, `${sub.description}…`, [{ type: 'context', elements: [{ type: 'mrkdwn', text: `:hourglass_flowing_sand: ${sub.description}` }] }], agent)).catch(() => null);
+      // In Slack, a line on the lead's progress card; the full record goes to beckon desktop.
+      const task = run.progress.byId.get(e.tool_use_id) ?? run.progress.addTask(e.tool_use_id, '');
+      Object.assign(task, { title: oneLine(`${agent.name}: ${sub.description}`, 150), status: 'in_progress', member: true, tool: false });
+      sub.record = { id: e.tool_use_id, agent: agent.name, task: sub.description, status: 'working', startedAt: this.now(), endedAt: null, report: '' };
+      t.team = [...(t.team ?? []), sub.record].slice(-TEAM_KEEP);
+      this.state.save();
+      this.refresh(key);
       return;
     }
     if (e.type === 'assistant' && e.parent_tool_use_id && run.subs.has(e.parent_tool_use_id)) {
@@ -1180,7 +1115,7 @@ export class Beckon {
         if (!report) continue;
         sub.text = report;
         sub.final = true;
-        if (sub.status) await this.subagentDone(t, project, sub);
+        if (sub.status) this.subagentDone(key, run, sub);
       }
       return;
     }
@@ -1192,35 +1127,25 @@ export class Beckon {
         const last = lastAssistantText(e.output_file);
         if (last) { sub.text = last; sub.final = true; }
       }
-      if (sub.final) return this.subagentDone(t, project, sub);
-      const timer = setTimeout(() => this.subagentDone(t, project, sub).catch(() => {}), 10_000);
+      if (sub.final) return this.subagentDone(key, run, sub);
+      const timer = setTimeout(() => this.subagentDone(key, run, sub), 10_000);
       timer.unref?.();
     }
   }
 
-  async postPlan(t, project, batch, leadText) {
-    const lead = project?.lead ? project.agents[project.lead] : null;
-    const who = batch.subs.map((s) => `• @${s.agent.name}: ${s.description}`).join('\n');
-    const how = batch.subs.length > 1 ? `_${batch.subs.length} working at the same time._` : '';
-    const text = this.linkAgents([leadText, who, how].filter(Boolean).join('\n\n'), project);
-    const label = batch.first ? ':clipboard: Plan' : ':arrow_right: Next';
-    await this.post(t.channel, t.threadTs, oneLine(text, 300), [{ type: 'context', elements: [{ type: 'mrkdwn', text: label }] }, { type: 'markdown', text: chunkMarkdown(text)[0] }], lead);
-  }
-
-  async subagentDone(t, project, sub) {
+  // A member finished: its line on the progress card is ticked off with the report's first line,
+  // and the whole report is kept for beckon desktop. Slack gets only the lead's own messages.
+  subagentDone(key, run, sub) {
     if (sub.done) return;
     sub.done = true;
-    const e = { status: sub.status ?? 'completed' };
-    {
-      const posted = await sub.posted;
-      const body = sub.text || (e.status === 'completed' ? 'Done.' : `Stopped (${e.status}).`);
-      const pieces = chunkMarkdown(emphasizeSummary(this.linkAgents(body, project)));
-      const blocks = [{ type: 'context', elements: [{ type: 'mrkdwn', text: `${e.status === 'completed' ? ':white_check_mark:' : ':warning:'} ${sub.description}` }] }, { type: 'markdown', text: pieces[0] }];
-      const summary = oneLine(firstLine(body), 300);
-      if (posted?.ts) await this.slackFor(t.channel, sub.agent).call('chat.update', { channel: t.channel, ts: posted.ts, text: summary, blocks });
-      else await this.post(t.channel, t.threadTs, summary, blocks, sub.agent);
-      for (const piece of pieces.slice(1)) await this.post(t.channel, t.threadTs, oneLine(piece, 300), [{ type: 'markdown', text: piece }], sub.agent);
+    const ok = (sub.status ?? 'completed') === 'completed';
+    const report = sub.text || (ok ? 'Done.' : `Stopped (${sub.status}).`);
+    run.progress.setTask(sub.record?.id, ok ? 'complete' : 'error', oneLine(firstLine(report), 200));
+    if (sub.record) {
+      Object.assign(sub.record, { status: ok ? 'done' : 'failed', endedAt: this.now(), report: report.slice(0, TEAM_REPORT_MAX) });
+      this.state.save();
     }
+    this.refresh(key);
   }
 
   // Tasks in an agent's answer: each line that starts with another agent's tag, with the lines
@@ -1289,7 +1214,7 @@ export class Beckon {
     const t = this.state.threads[key];
     const agent = this.agentOf(t, this.config.projects[t?.project]);
     // Shown only when the message does not already carry the agent's name.
-    const named = agent && (this.appOf(agent) || (agent.slackApp !== 'MAIN' && !this.noAgentIdentity));
+    const named = agent && !this.noAgentIdentity;
     return agent && !named ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `*${agent.name}* agent` }] }] : [];
   }
 
@@ -1306,13 +1231,17 @@ export class Beckon {
   async finishRun(key, run) {
     const t = this.state.threads[key];
     run.progress.finish(run.status);
+    // Members still marked as working when the run ends were cut off with it.
+    for (const sub of run.subs?.values() ?? []) {
+      if (sub.record?.status === 'working') Object.assign(sub.record, { status: 'failed', endedAt: this.now(), report: sub.text || `Stopped: the run ended (${run.status}).` });
+    }
     const project = this.config.projects[t.project];
     let text = (run.reply ?? '').trim();
     // The lead's report at the end of team work: let the person who asked know.
     if (project?.lead && t.agent === project.lead && (t.leadRun || run.subs?.size) && text && run.status === 'done' && !this.assignments(text, project, project.lead).length && /^[UW][A-Z0-9]+$/.test(t.createdBy ?? '')) {
       text = `<@${t.createdBy}> ${text}`;
     }
-    const reply = this.linkAgents(text, project);
+    const reply = text;
     const pieces = reply ? chunkMarkdown(emphasizeSummary(reply)) : [];
     const summary = reply ? oneLine(firstLine(reply), 300) : run.progress.title(this.now(), run.status);
     const blocks = [...this.agentBlock(key), run.progress.planBlock(this.now(), run.status)];
@@ -1555,7 +1484,7 @@ export class Beckon {
       if (run) this.refresh(a.key);
     }
     // The question was only there to ask; the answer lives in the plan, so the thread stays short.
-    this.slackFor(a.channel).call('chat.delete', { channel: a.channel, ts: a.ts })
+    this.slack.call('chat.delete', { channel: a.channel, ts: a.ts })
       .catch((e) => this.log(`Could not remove the approval message: ${e.message}`));
 
     if (decision === 'allow') {
@@ -1579,7 +1508,7 @@ export class Beckon {
     if (!this.allowed(user)) {
       const channel = payload.channel?.id;
       if (channel) {
-        await this.slackFor(channel).call('chat.postEphemeral', { channel, user, text: 'Only the people listed in beckon\'s config can do that.' }).catch(() => {});
+        await this.slack.call('chat.postEphemeral', { channel, user, text: 'Only the people listed in beckon\'s config can do that.' }).catch(() => {});
       }
       return;
     }
@@ -1593,7 +1522,7 @@ export class Beckon {
         // A button from a run that no longer exists (beckon restarted or stopped while it waited):
         // say so instead of doing nothing.
         if (!settled && payload.channel?.id && payload.message?.ts) {
-          await this.slackFor(payload.channel.id).call('chat.update', {
+          await this.slack.call('chat.update', {
             channel: payload.channel.id,
             ts: payload.message.ts,
             text: ':hourglass: This approval belonged to a run that has already ended (beckon was restarted or stopped). Reply in the thread to carry on.',

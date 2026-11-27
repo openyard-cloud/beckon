@@ -109,7 +109,7 @@ In a project's channel, a message that starts with an agent's tag goes to that a
 
 **Agents hand work to each other.** An agent that finishes its part and ends its answer with a line like `@qa check the booking flow in PR #412` gives the thread to that agent, which carries on in the same session and worktree. So `@pm` can write a spec and hand it to `@dev`, who opens the pull request and hands it to `@qa`. To stop agents passing work back and forth forever, beckon allows `maxHandoffs` (default 3) hand-overs in a row; then it waits for a person. Any message from a person starts the count again, and a reply that starts with a tag hands the thread to that agent.
 
-Each agent runs one of Claude Code's own agents (`claude --agent <name>`): a file in the repository's `.claude/agents/` (or in `~/.claude/agents/`) with the role's prompt, its tools and its model. Its `skills` are folders that hold `skills/<name>/SKILL.md`; beckon loads each one as a plugin for that agent's runs only (`--plugin-dir`), so a skill for QA is not in the PM's way. Keep both in the repository, so the team edits them in pull requests:
+Each agent runs one of Claude Code's own agents (`claude --agent <name>`). Give it a `prompt` and beckon defines it on the spot (`--agents`), so a new role needs only a few lines in the config, or a form in beckon desktop. Without a `prompt`, it is a file in the repository's `.claude/agents/` (or in `~/.claude/agents/`) with the role's prompt, its tools and its model. Its `skills` are folders that hold `skills/<name>/SKILL.md`; beckon loads each one as a plugin for that agent's runs only (`--plugin-dir`), so a skill for QA is not in the PM's way. Keep both in the repository, so the team edits them in pull requests:
 
 ```jsonc
 "projects": {
@@ -120,7 +120,8 @@ Each agent runs one of Claude Code's own agents (`claude --agent <name>`): a fil
       "pm":       { "description": "specs, priorities, product numbers", "skills": ".claude/roles/pm" },
       "dev":      { "agent": "senior-dev", "skills": ".claude/roles/dev" },  // agent: the file's name, if it differs
       "designer": { "skills": ".claude/roles/designer", "channels": ["#myapp-design"] },
-      "qa":       { "skills": ".claude/roles/qa", "model": "sonnet", "icon": ":test_tube:" }
+      "qa":       { "skills": ".claude/roles/qa", "model": "sonnet", "icon": ":test_tube:" },
+      "writer":   { "description": "release notes, store texts", "prompt": "You write short, plain release notes and store texts in Vietnamese." }
     },
     "defaultAgent": "dev"
   }
@@ -131,17 +132,9 @@ An agent can also set its own `model`, `permissionMode`, `displayName` (default:
 
 Agents post under their own name and icon when beckon's Slack app has the `chat:write.customize` scope. Apps made from an older manifest lack it: add it under *OAuth & Permissions > Bot Token Scopes* and reinstall the app. Until then agents post as beckon, with the agent's name above the answer.
 
-**A lead agent runs the team.** With `"lead": "pm"`, you give the work to the lead only, and it gets it done through the others without you passing anything on. The lead starts the members as Claude Code subagents (the Agent tool, with each member's `agent` as its subagent type), in its own session and worktree: tasks that do not depend on each other run at the same time, and a task that needs another's result (testing after the code) starts once that result is in. beckon loads every member's skills into the lead's session for this. Each member gets a message in the thread under its own name and app, "working on ..." while it runs and then its report, and the lead's final report mentions you. A task you give a member directly stays with that member.
+**A lead agent runs the team.** With `"lead": "pm"`, you give the work to the lead only, and it gets it done through the others without you passing anything on. The lead starts the members as Claude Code subagents (the Agent tool, with each member's `agent` as its subagent type), in its own session and worktree: tasks that do not depend on each other run at the same time, and a task that needs another's result (testing after the code) starts once that result is in. beckon loads every member's skills into the lead's session for this. Slack shows only the lead: each member is a line on the lead's progress card while it works, ticked off with the first line of its report, and the lead's final report carries what matters and mentions you. Each member's full report is in beckon desktop, under the thread's run. A task you give a member directly stays with that member.
 
 Members started as subagents share the lead's worktree, so the lead is told never to run two at once that edit the same files. They see only the task the lead gives them, not beckon's own instructions, so the lead passes on what they need (risky actions still wait for your Allow button). A lead can also hand work on with tags at the end of its answer (`@dev ...`, one line per task): beckon then runs those as turns of their own, one after another, and gives the lead the turn back when they are done; `maxHandoffs` caps those turns.
-
-**An agent with its own Slack app** is a real member of the workspace: typing `@` suggests it, a tag shows as a mention, and people can DM it. Give the agent `"slackApp": "QA"`, then:
-
-1. Create a Slack app from `slack-app-manifest.json` (as in [Set up](#set-up)), named after the agent, like *Beckon-QA*, and install it.
-2. Under *Basic Information > App-Level Tokens*, generate a token with `connections:write`.
-3. Put both tokens in `~/.beckon/env` as `SLACK_BOT_TOKEN_QA=xoxb-...` and `SLACK_APP_TOKEN_QA=xapp-...`, invite the app to the project's channels, and restart beckon.
-
-beckon connects to each agent app too. A message reaches every app it is in, and runs once. `@Beckon-QA check the login page` goes to QA; a DM to Beckon-QA does too, and is answered there. QA posts through its own app, and when an agent hands work on, its `@qa` becomes a real mention of Beckon-QA. `"slackApp": "main"` makes an agent post as beckon itself, with beckon's name and icon, like the project's default agent. Without its tokens, an agent posts through beckon under its own name, as above.
 
 ### Managing projects from Slack
 

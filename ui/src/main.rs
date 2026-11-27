@@ -316,7 +316,7 @@ impl App {
             "runs": runs,
             "threads": threads.len(),
             "projects": cfg["projects"].as_object().map(|o| o.len()).unwrap_or(0),
-            "projectList": project_list(&cfg, &runs, &env_keys(&self.home)),
+            "projectList": project_list(&cfg, &runs),
             "schedules": cfg["schedules"].as_array().map(|a| a.len()).unwrap_or(0),
             "watches": cfg["watches"].as_array().map(|a| a.len()).unwrap_or(0),
             "log": lines[lines.len().saturating_sub(80)..].join("\n"),
@@ -418,6 +418,8 @@ impl App {
                 "allowAll": t["allowAll"].as_bool().unwrap_or(false),
                 "running": !session.is_empty() && procs.iter().any(|a| a.contains(session)),
                 "tokens": sums,
+                // the lead's team members: one record per task, with its report (beckon's state)
+                "team": t["team"].as_array().cloned().unwrap_or_default(),
             }));
         }
         list.sort_by_key(|t| std::cmp::Reverse(t["lastActive"].as_u64().unwrap_or(0)));
@@ -493,22 +495,9 @@ impl App {
 
 // ---- projects and their agents, for the overview and the menu bar ----
 
-/// The names of the variables set in beckon's env file (never their values).
-fn env_keys(home: &Path) -> std::collections::HashSet<String> {
-    fs::read_to_string(home.join("env"))
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| {
-            let l = l.trim().strip_prefix("export ").unwrap_or(l.trim());
-            let (k, v) = l.split_once('=')?;
-            let v = v.trim().trim_matches(|c| c == '"' || c == '\'');
-            (!k.starts_with('#') && !v.is_empty()).then(|| k.trim().to_string())
-        })
-        .collect()
-}
-
-/// Each project with its agents: role, how it shows in Slack, and whether it is working now.
-fn project_list(cfg: &Value, runs: &[Value], env: &std::collections::HashSet<String>) -> Value {
+/// Each project with its agents: role, whether beckon defines it (a prompt), and whether it is
+/// working now. All agents post through beckon's own Slack app; with a lead, only the lead posts.
+fn project_list(cfg: &Value, runs: &[Value]) -> Value {
     let projects = cfg["projects"].as_object().cloned().unwrap_or_default();
     Value::Array(
         projects
@@ -520,20 +509,11 @@ fn project_list(cfg: &Value, runs: &[Value], env: &std::collections::HashSet<Str
                     .map(|o| {
                         o.iter()
                             .map(|(key, a)| {
-                                let app = a["slackApp"].as_str().map(|s| s.to_uppercase());
-                                let slack = match app.as_deref() {
-                                    None => "posts as beckon, with its own name".to_string(),
-                                    Some("MAIN") => "beckon's own app".to_string(),
-                                    Some(x) if env.contains(&format!("SLACK_BOT_TOKEN_{x}")) && env.contains(&format!("SLACK_APP_TOKEN_{x}")) => format!("own app {x}"),
-                                    Some(x) => format!("own app {x}: tokens missing"),
-                                };
                                 json!({
                                     "name": key,
                                     "agent": a["agent"].as_str().unwrap_or(key),
-                                    "app": app,
                                     "description": a["description"],
-                                    "slack": slack,
-                                    "appMissing": app.as_deref().is_some_and(|x| x != "MAIN" && !env.contains(&format!("SLACK_BOT_TOKEN_{x}"))),
+                                    "defined": a["prompt"].as_str().is_some_and(|p| !p.trim().is_empty()),
                                     "lead": p["lead"].as_str() == Some(key),
                                     "default": p["defaultAgent"].as_str() == Some(key),
                                     "running": running_of(Some(key)),
