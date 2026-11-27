@@ -90,6 +90,8 @@ export class Progress {
 
   // Feed one stream-json event from claude; returns true when the visible plan changed.
   push(event) {
+    // A team member's own steps stay off the card: it shows one line per member (see the daemon).
+    if (event.parent_tool_use_id) return false;
     let changed = false;
     if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
       for (const block of event.message.content) {
@@ -104,6 +106,8 @@ export class Progress {
     if (event.type === 'user' && Array.isArray(event.message?.content)) {
       for (const block of event.message.content) {
         if (block?.type !== 'tool_result' || !block.tool_use_id) continue;
+        // A member in the background answers "started" at once; its line closes with its report.
+        if (this.byId.get(block.tool_use_id)?.member) continue;
         if (this.setTask(block.tool_use_id, block.is_error ? 'error' : 'complete')) changed = true;
       }
     }

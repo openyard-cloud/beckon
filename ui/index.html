@@ -125,6 +125,17 @@ h2 .link,h2 .btn{margin-left:auto;font-weight:400}
 .list .n b{color:var(--ink);font-weight:500}
 .list .head{color:var(--mute);font-size:11px;min-height:30px;padding-top:6px;padding-bottom:6px}
 .empty{padding:22px 12px;text-align:center;color:var(--mute)}
+/* a thread's team: one row per member task, each opening to its report */
+.list .crew{border-top:.5px solid var(--line);padding:4px 12px 10px 54px}
+.crew .m{display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;border-radius:6px}
+.crew .m:hover{background:rgba(127,127,127,.06)}
+.crew .m .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crew .m .n{min-width:0}
+.chip{display:inline-block;font-size:10px;font-weight:600;padding:0 7px;border-radius:9px;line-height:17px;white-space:nowrap}
+.chip.run{background:var(--accent-soft);color:var(--accent)}.chip.ok{background:rgba(40,167,69,.14);color:var(--ok)}.chip.bad{background:rgba(229,52,42,.14);color:var(--bad)}
+.tog{background:none;border:0;padding:0;font:inherit;color:var(--accent);cursor:pointer}
+.md{margin:2px 0 8px 32px;padding:10px 12px;border-radius:8px;background:rgba(127,127,127,.07);font-size:12px;line-height:1.55;word-break:break-word;max-height:420px;overflow:auto}
+.md h4{margin:8px 0 4px;font-size:12px}.md p{margin:0 0 6px}.md ul{margin:0 0 6px;padding-left:18px}.md code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:rgba(127,127,127,.14);padding:0 3px;border-radius:3px}.md pre{white-space:pre-wrap;margin:0 0 6px;font-family:ui-monospace,Menlo,monospace;font-size:11px}
 
 /* agent avatars and cards */
 .av{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;font-weight:700;font-size:11px;letter-spacing:.02em;flex:none;position:relative;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.12)}
@@ -319,11 +330,10 @@ const ROLES = [
 ];
 const OTHER = [[['#7fd3e6', '#2f8fa8'], '#fff'], [['#ff9bb0', '#d2476a'], '#fff'], [['#b8bcc4', '#6d737d'], '#fff']];
 function avatar(a, size = '', status) {
-  const s = `${a.name} ${a.agent ?? ''} ${a.app ?? ''}`.toLowerCase();
+  const s = `${a.name} ${a.agent ?? ''}`.toLowerCase();
   const r = ROLES.find(([re]) => re.test(s)) ?? (a.lead ? ROLES[2] : null);
   const [g, ink] = r ? [r[2], r[3]] : OTHER[[...a.name].reduce((x, c) => x + c.charCodeAt(0), 0) % OTHER.length];
-  const app = a.app && a.app !== 'MAIN' && a.app.length <= 3 ? a.app : null;
-  const label = app ?? r?.[1] ?? a.name.slice(0, 2).toUpperCase();
+  const label = r?.[1] ?? a.name.slice(0, 2).toUpperCase();
   return h('div', { class: 'av ' + size, style: `background:linear-gradient(135deg,${g[0]},${g[1]});color:${ink}`, title: a.name }, label,
     status === undefined ? null : h('i', { class: 'st' + (status ? ' ok' : '') }));
 }
@@ -464,14 +474,15 @@ async function project(my) {
     if (my !== seq) return;
     header(name, status, [seg]);
     fill(view, h('div', { class: 'page' },
-      h('h2', {}, 'Agents'),
+      h('h2', {}, 'Agents', h('button', { class: 'link', onclick: () => addAgent(name) }, '+ Thêm agent')),
+      p.lead ? h('p', { class: 'muted small', style: 'margin:-4px 0 10px' }, `Trong Slack chỉ ${p.lead} trao đổi với bạn; các agent khác làm việc bên dưới, xem chi tiết ở tab Runs.`) : null,
       h('div', { class: 'cards' }, p.agents.map((a) => h('button', { class: 'box card', onclick: () => go({ v: 'project', p: name, s: 'agents', a: a.name }) },
         h('div', { class: 'who' }, avatar(a, 'l', !!a.running),
           h('div', {}, h('div', { style: 'display:flex;gap:5px;align-items:center' }, h('b', {}, a.name), a.lead ? h('span', { class: 'pill a' }, 'lead') : null, a.default ? h('span', { class: 'pill' }, 'mặc định') : null),
-            h('div', { class: 'muted small' }, a.agent !== a.name ? `agent ${a.agent}` : 'Claude Code agent'))),
+            h('div', { class: 'muted small' }, a.defined ? 'hướng dẫn trong beckon' : a.agent !== a.name ? `agent ${a.agent}` : `.claude/agents/${a.agent}.md`))),
         h('div', { class: 'desc' }, a.description || 'Chưa có mô tả'),
         h('div', { class: 'foot' }, h('span', { class: 'dot ' + (a.running ? 'ok pulse' : '') }), h('span', {}, a.running ? 'Đang làm' : 'Rảnh'), h('span', {}, '·'),
-          h('span', { class: 'grow' + (a.appMissing ? ' warn' : ''), title: a.slack }, a.slack)))),
+          h('span', { class: 'grow' }, a.lead ? 'trao đổi trong Slack' : p.lead ? `làm dưới ${p.lead}` : 'nhận việc khi được tag')))),
         h('button', { class: 'card add', onclick: () => addAgent(name) }, icon('plus'), 'Thêm agent')),
       p.agents.length ? null : h('p', { class: 'muted' }, 'Chưa có agent: việc ở project này chạy bằng Claude Code thường.'),
       h('h2', {}, 'Đang chạy'), runRows(runs, false),
@@ -494,19 +505,54 @@ async function project(my) {
     if (sub === 'plan') planPage(name); else projectSettings(name);
   }
 }
+// A tiny markdown view for reports: text is escaped first, then headings, lists, bold and code.
+function md(text) {
+  const esc = (x) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const inline = (x) => esc(x).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
+  const out = []; let list = false, code = null;
+  for (const line of String(text ?? '').split('\n')) {
+    if (code != null) { if (/^\s*```/.test(line)) { out.push('<pre>' + esc(code.join('\n')) + '</pre>'); code = null; } else code.push(line); continue; }
+    if (/^\s*```/.test(line)) { if (list) { out.push('</ul>'); list = false; } code = []; continue; }
+    const li = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)/);
+    if (li) { if (!list) { out.push('<ul>'); list = true; } out.push('<li>' + inline(li[1]) + '</li>'); continue; }
+    if (list) { out.push('</ul>'); list = false; }
+    const hd = line.match(/^#{1,6}\s+(.*)/);
+    if (hd) out.push('<h4>' + inline(hd[1]) + '</h4>'); else if (line.trim()) out.push('<p>' + inline(line) + '</p>');
+  }
+  if (code != null) out.push('<pre>' + esc(code.join('\n')) + '</pre>');
+  if (list) out.push('</ul>');
+  const d = h('div', { class: 'md' }); d.innerHTML = out.join(''); return d;
+}
+const TEAM_STATUS = { working: ['run', 'đang làm'], done: ['ok', 'xong'], failed: ['bad', 'lỗi'] };
+function teamPanel(t) {
+  return h('div', { class: 'crew' }, t.team.map((m) => {
+    const [cls, label] = TEAM_STATUS[m.status] ?? ['', m.status];
+    const a = agentOf(t.project, m.agent) ?? { name: m.agent };
+    const took = m.startedAt ? short(Math.max(0, Math.round(((m.endedAt || Date.now()) - m.startedAt) / 1000))) : '';
+    const slot = h('div');
+    const open = () => slot.replaceChildren(slot.childElementCount ? '' : m.report ? md(m.report) : h('div', { class: 'md muted' }, 'Chưa có báo cáo.'));
+    return h('div', {}, h('div', { class: 'm', onclick: open, title: 'Xem báo cáo' }, avatar(a, 's'), h('b', {}, m.agent), h('span', { class: 't muted' }, m.task), h('span', { class: 'chip ' + cls }, label), h('span', { class: 'n muted small' }, took)), slot);
+  }));
+}
 function threadRows(list, head) {
   return h('div', { class: 'box list' },
     head ? h('div', { class: 'r head' }, h('div', { style: 'width:32px' }), h('div', { class: 'main' }, `${list.length} việc`), h('div', { class: 'n' }, 'Lần cuối'), h('div', { class: 'n opt' }, 'Output'), h('div', { class: 'n opt' }, 'Tổng token')) : null,
     list.map((t) => {
       const a = agentOf(t.project, t.agent);
       const by = t.createdBy === 'schedule' ? 'theo lịch' : t.createdBy === 'watch' ? 'cảnh báo' : null;
-      return h('div', { class: 'r' },
+      const team = t.team?.length ? t : null;
+      const slot = team ? h('div', { style: 'display:contents' }) : null;
+      const toggle = team ? h('button', { class: 'tog small', onclick: () => slot.replaceChildren(slot.childElementCount ? '' : teamPanel(team)) },
+        `Đội · ${team.team.length} việc${team.team.some((m) => m.status === 'working') ? ' · đang làm' : ''}`) : null;
+      const rowEl = h('div', { class: 'r' },
         a ? avatar(a, '', t.running || undefined) : h('div', { class: 'av g' }, icon(t.createdBy === 'schedule' ? 'clock' : t.createdBy === 'watch' ? 'bell' : 'chat')),
         h('div', { class: 'main' }, h('div', { title: t.title }, t.title),
-          h('div', { class: 'meta' }, [t.agent, by, t.running ? 'đang chạy' : null, t.allowAll ? 'cho phép hết' : null, t.worktreeRemoved ? 'đã xoá worktree' : null, when(t.createdAt)].filter(Boolean).join(' · '))),
+          h('div', { class: 'meta' }, [t.agent, by, t.running ? 'đang chạy' : null, t.allowAll ? 'cho phép hết' : null, t.worktreeRemoved ? 'đã xoá worktree' : null, when(t.createdAt)].filter(Boolean).join(' · ')),
+          toggle),
         h('div', { class: 'n', title: when(t.lastActive) }, ago(t.lastActive)),
         h('div', { class: 'n opt', title: `input ${t.tokens[0]} · output ${t.tokens[1]} · cache read ${t.tokens[2]} · cache write ${t.tokens[3]}` }, t.tokens[4] ? num(t.tokens[1]) : '–'),
         h('div', { class: 'n opt' }, t.tokens[4] ? num(total(t.tokens)) : '–'));
+      return team ? [rowEl, slot] : rowEl;
     }));
 }
 
@@ -593,22 +639,22 @@ async function agentEdit(my, name, key) {
   const flag = (prop, label, hint) => row(label, hint, h('input', { type: 'checkbox', checked: p[prop] === key, onchange: (e) => { if (e.target.checked) p[prop] = key; else delete p[prop]; markDirty(); } }));
   fill(view, h('div', { class: 'page', style: 'max-width:760px' },
     h('div', { class: 'box', style: 'display:flex;gap:14px;align-items:center;padding:16px;margin-bottom:20px' },
-      avatar({ name: key, agent: a.agent, app: a.slackApp?.toUpperCase(), lead: p.lead === key }, 'l', live ? !!live.running : undefined),
+      avatar({ name: key, agent: a.agent, lead: p.lead === key }, 'l', live ? !!live.running : undefined),
       h('div', { style: 'min-width:0' }, h('b', { style: 'font-size:15px' }, key), h('div', { class: 'muted' }, a.description || 'Chưa có mô tả'),
-        live ? h('div', { class: 'small' + (live.appMissing ? ' warn' : ' muted') }, (live.running ? 'Đang làm' : 'Rảnh') + ' · ' + live.slack) : h('div', { class: 'small muted' }, 'Mới: bấm Lưu để thêm'))),
+        live ? h('div', { class: 'small muted' }, (live.running ? 'Đang làm' : 'Rảnh') + ' · ' + (p.lead === key ? 'trao đổi trong Slack' : p.lead ? `làm dưới ${p.lead}` : 'nhận việc khi được tag')) : h('div', { class: 'small muted' }, 'Mới: bấm Lưu để thêm'))),
     group('Agent', [
-      f(a, 'description', 'Mô tả', 'lead đọc để biết giao việc gì', 'text', { placeholder: 'vd: kiểm tính năng, test, báo lỗi' }),
-      f(a, 'agent', 'File agent', '.claude/agents/<tên>.md', 'text', { mono: true, placeholder: key }),
+      f(a, 'description', 'Vai trò', 'lead đọc để biết giao việc gì', 'text', { placeholder: 'vd: kiểm tính năng, test, báo lỗi' }),
+      f(a, 'prompt', 'Hướng dẫn', `để trống thì dùng file .claude/agents/${a.agent || key}.md trong repo`, 'textarea', { rows: 7 }),
+      f(a, 'agent', 'Loại agent Claude Code', 'không bắt buộc, mặc định là tên agent', 'text', { mono: true, placeholder: key }),
       f(a, 'skills', 'Thư mục skill', 'chứa skills/<tên>/SKILL.md', 'list', { mono: true, placeholder: `.claude/roles/${key}` }),
-      f(a, 'model', 'Model', null, 'text', { placeholder: 'theo file agent' }),
+      f(a, 'model', 'Model', null, 'text', { placeholder: 'mặc định' }),
       f(a, 'permissionMode', 'Chế độ quyền', null, 'select', { options: PERMS, blank: '(theo project)' })]),
     group('Vai trò', [flag('lead', 'Lead của đội', 'nhận mọi việc và tự điều phối agent khác'), flag('defaultAgent', 'Agent mặc định', 'nhận việc không tag ai')]),
     group('Slack', [
-      f(a, 'slackApp', 'App Slack riêng', 'trống: đăng qua beckon với tên riêng · main: chính là beckon', 'text', { mono: true, placeholder: 'vd: QA' }),
-      f(a, 'displayName', 'Tên hiển thị', 'khi đăng qua beckon', 'text', { placeholder: key.length <= 3 ? key.toUpperCase() : key[0].toUpperCase() + key.slice(1) }),
+      f(a, 'displayName', 'Tên hiển thị', p.lead && p.lead !== key ? `chỉ dùng khi được giao việc trực tiếp; trong đội, ${p.lead} trao đổi thay` : 'tên khi đăng qua beckon', 'text', { placeholder: key.length <= 3 ? key.toUpperCase() : key[0].toUpperCase() + key.slice(1) }),
       f(a, 'icon', 'Biểu tượng', 'emoji Slack hoặc link https', 'text', { mono: true, placeholder: ':robot_face:' }),
       f(a, 'channels', 'Nhận việc mới ở kênh', 'trong các kênh của project', 'list', { mono: true, placeholder: 'không' })]),
-    group(null, [row('Xoá agent ' + key, 'file .claude/agents không bị đụng tới', h('button', { class: 'btn d', onclick: async () => {
+    group(null, [row('Xoá agent ' + key, 'file .claude/agents trong repo không bị đụng tới', h('button', { class: 'btn d', onclick: async () => {
       if (!(await ask(`Xoá agent "${key}"?`, 'Chỉ có hiệu lực khi bấm Lưu.', 'Xoá', true))) return;
       delete p.agents[key]; if (!Object.keys(p.agents).length) delete p.agents;
       if (p.lead === key) delete p.lead; if (p.defaultAgent === key) delete p.defaultAgent;
@@ -621,7 +667,7 @@ async function addAgent(name) {
   if (dirty) return toast('Lưu hoặc bỏ thay đổi đang có trước.');
   await loadConfig();
   const input = h('input', { placeholder: 'vd: qa', class: 'mono', spellcheck: 'false' });
-  const k = await sheet({ title: 'Thêm agent', text: 'Tên để tag trong Slack (@qa), mặc định chạy .claude/agents/<tên>.md.', body: [h('label', {}, 'Tên'), input], ok: 'Thêm', onOk: async () => {
+  const k = await sheet({ title: 'Thêm agent', text: 'Tên ngắn như qa, dev, designer. Sau đó điền vai trò và hướng dẫn; để trống hướng dẫn thì dùng .claude/agents/<tên>.md trong repo.', body: [h('label', {}, 'Tên'), input], ok: 'Thêm', onOk: async () => {
     const v = input.value.trim();
     if (!/^[a-z0-9][a-z0-9_-]*$/i.test(v)) throw new Error('Tên dùng chữ, số, gạch ngang và gạch dưới.');
     if (Object.keys(cfg.projects[name].agents ?? {}).some((x) => x.toLowerCase() === v.toLowerCase())) throw new Error('Tên này đã có.');

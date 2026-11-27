@@ -227,8 +227,9 @@ export const AGENT_NAME = /^[a-z0-9][a-z0-9_-]*$/i;
 const AGENT_ICONS = { pm: ':clipboard:', dev: ':hammer_and_wrench:', designer: ':art:', design: ':art:', qa: ':mag:' };
 
 // A project's agents: the roles a task can be given to, like pm, dev, designer and qa. Each runs
-// one of Claude Code's agents (`claude --agent`, defined in the repository's .claude/agents/ or in
-// ~/.claude/agents/), with its own folders of skills loaded as plugins (`--plugin-dir`).
+// one of Claude Code's agents (`claude --agent`): one defined right here with a `prompt` (passed
+// with `--agents`), or else one from the repository's .claude/agents/ or ~/.claude/agents/. Its
+// folders of skills are loaded as plugins (`--plugin-dir`). They all post through beckon's app.
 function agentsConfig(raw, at, projectChannels, errors) {
   const agents = {};
   if (raw === undefined) return agents;
@@ -246,12 +247,11 @@ function agentsConfig(raw, at, projectChannels, errors) {
       errors.push(`${where}: must be an object; {} runs the Claude Code agent of the same name`);
       continue;
     }
-    for (const k of ['agent', 'description', 'model', 'displayName', 'icon', 'slackApp']) {
+    for (const k of ['agent', 'description', 'prompt', 'model', 'displayName', 'icon']) {
       if (a[k] !== undefined && (typeof a[k] !== 'string' || !a[k])) errors.push(`${where}.${k}: must be a string`);
     }
     if (typeof a.agent === 'string' && a.agent && !/^[a-z0-9][a-z0-9_:-]*$/i.test(a.agent)) errors.push(`${where}.agent: the name of a Claude Code agent, like "qa"`);
     if (typeof a.icon === 'string' && a.icon && !/^:[a-z0-9_+-]+:$/i.test(a.icon) && !/^https:\/\//.test(a.icon)) errors.push(`${where}.icon: an emoji like ":mag:" or an https image address`);
-    if (typeof a.slackApp === 'string' && a.slackApp && !/^[a-z0-9_]+$/i.test(a.slackApp)) errors.push(`${where}.slackApp: a short name like "QA"; its tokens are SLACK_BOT_TOKEN_QA and SLACK_APP_TOKEN_QA in the env file, or "main" for beckon's own app`);
     const skills = a.skills === undefined ? [] : typeof a.skills === 'string' ? [a.skills] : a.skills;
     if (!isStringArray(skills)) errors.push(`${where}.skills: a folder of skills (it holds skills/<name>/SKILL.md), or a list of them; relative to the repository, or absolute`);
     if (a.permissionMode !== undefined && !PERMISSION_MODES.includes(a.permissionMode)) errors.push(`${where}.permissionMode: one of ${PERMISSION_MODES.join(', ')}`);
@@ -264,6 +264,8 @@ function agentsConfig(raw, at, projectChannels, errors) {
       name: key,
       agent: typeof a.agent === 'string' && a.agent ? a.agent : key,
       description: typeof a.description === 'string' ? a.description : null,
+      // Its instructions, when beckon defines the agent itself rather than a file in .claude/agents/.
+      prompt: typeof a.prompt === 'string' && a.prompt.trim() ? a.prompt : null,
       // How its messages appear in Slack (needs the chat:write.customize scope).
       displayName: typeof a.displayName === 'string' && a.displayName ? a.displayName : key.length <= 3 ? key.toUpperCase() : key[0].toUpperCase() + key.slice(1),
       icon: typeof a.icon === 'string' && a.icon ? a.icon : AGENT_ICONS[key.toLowerCase()] ?? ':robot_face:',
@@ -271,8 +273,6 @@ function agentsConfig(raw, at, projectChannels, errors) {
       model: typeof a.model === 'string' && a.model ? a.model : null,
       permissionMode: PERMISSION_MODES.includes(a.permissionMode) ? a.permissionMode : null,
       channels: isStringArray(channels) ? channels : [],
-      // A Slack app of its own (a real member people can @mention), or "main": beckon's app as is.
-      slackApp: typeof a.slackApp === 'string' && /^[a-z0-9_]+$/i.test(a.slackApp) ? a.slackApp.toUpperCase() : null,
     };
   }
   return agents;

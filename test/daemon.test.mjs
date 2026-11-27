@@ -789,60 +789,6 @@ test('agents are tagged with @name, post under their own name, and hand a thread
   }
 });
 
-test('agents with their own Slack apps: a mention of the app is a task for it, it posts through its app, and hand-overs mention it for real', async () => {
-  const { beckon, slack, state, claudeRuns, done, close } = await setup({
-    config: {
-      projects: { proj: { path: '/tmp', channels: ['#proj'], agents: { pm: { slackApp: 'main' }, qa: { slackApp: 'QA' }, dev: { slackApp: 'be' } }, defaultAgent: 'pm' } },
-      maxHandoffs: 1,
-    },
-  });
-  try {
-    const qaSlack = new FakeSlack({ userId: 'UQA', botId: 'BQA', user: 'beckon-qa' });
-    const beSlack = new FakeSlack({ userId: 'UBE', botId: 'BBE', user: 'beckon-be' });
-    await beckon.addApp('QA', qaSlack);
-    await beckon.addApp('BE', beSlack);
-
-    // the same message arrives through every app's connection; it runs once, as qa, through QA's app
-    const ask = msg({ text: '<@UQA> check the login page' });
-    await beckon.handleEvent(ask, 'BE');
-    await beckon.handleEvent({ ...ask, type: 'app_mention' }, 'QA');
-    await beckon.handleEvent(ask);
-    await done();
-    assert.equal(claudeRuns().length, 1);
-    assert.equal(state.threads[`CPROJ:${ask.ts}`].agent, 'qa');
-    const qaPosts = qaSlack.posts();
-    assert.ok(qaPosts.some((p) => p.text === 'echo: check the login page'));
-    assert.ok(qaPosts.every((p) => !p.username), 'an agent with its own app posts as itself, no custom name');
-    assert.ok(!slack.posts().some((p) => p.text === 'echo: check the login page'));
-    assert.ok(qaSlack.find('chat.delete').length >= 1, 'its own progress message is removed through its app');
-
-    // beckon's own app is the pm, as itself
-    const plan = mention('plan the next sprint');
-    await beckon.handleEvent(plan);
-    await done();
-    assert.equal(state.threads[`CPROJ:${plan.ts}`].agent, 'pm');
-    const pmAnswer = slack.posts().find((p) => p.text === 'echo: plan the next sprint');
-    assert.ok(pmAnswer && !pmAnswer.username);
-
-    // dev hands to qa: the tag in its answer becomes a real mention of QA's app
-    const ping = msg({ text: '<@UBE> PINGPONG' });
-    await beckon.handleEvent(ping);
-    await waitFor(() => slack.posts().some((p) => /Not handing this to \*dev\*/.test(p.text)));
-    await done();
-    const devAnswer = beSlack.posts().find((p) => /done by dev/.test(JSON.stringify(p.blocks)));
-    assert.match(JSON.stringify(devAnswer.blocks), /<@UQA> PINGPONG/);
-    assert.ok(qaSlack.posts().some((p) => p.text === 'done by qa'));
-
-    // a DM to QA's app is answered by QA, in that DM
-    await beckon.handleEvent({ type: 'message', channel: 'DQA1', channel_type: 'im', user: 'U1', ts: '1800000099.000001', text: 'hello qa' }, 'QA');
-    await done();
-    assert.equal(state.threads['DQA1:1800000099.000001'].agent, 'qa');
-    assert.ok(qaSlack.posts().some((p) => p.channel === 'DQA1' && p.text === 'echo: hello qa'));
-  } finally {
-    await close();
-  }
-});
-
 test('a lead agent plans, its team works through the tasks one after another, and the lead reports back', async () => {
   const { beckon, slack, state, claudeRuns, done, close } = await setup({
     config: {
@@ -898,15 +844,20 @@ test('a lead\'s team stops after maxHandoffs agent turns without a person', asyn
   }
 });
 
-test('the lead runs its team as subagents: each member posts under its own app, the lead loads their skills and reports', async () => {
+test('the lead runs its team as subagents: Slack shows only the lead, members are lines on its card and records for beckon desktop', async () => {
   const skills = { pm: tempDir(), dev: tempDir(), qa: tempDir() };
-  const { beckon, slack, claudeRuns, done, close } = await setup({
+  const { beckon, slack, state, claudeRuns, done, close } = await setup({
     config: {
       projects: {
         proj: {
           path: '/tmp',
           channels: ['#proj'],
-          agents: { pm: { slackApp: 'main', skills: skills.pm }, dev: { agent: 'senior-dev', slackApp: 'BE', skills: skills.dev }, qa: { slackApp: 'QA', skills: [skills.qa, skills.pm] }, designer: {} },
+          agents: {
+            pm: { skills: skills.pm },
+            dev: { agent: 'senior-dev', skills: skills.dev },
+            qa: { skills: [skills.qa, skills.pm] },
+            designer: { description: 'UI review', prompt: 'You review screens against the design system.' },
+          },
           defaultAgent: 'pm',
           lead: 'pm',
         },
@@ -914,45 +865,39 @@ test('the lead runs its team as subagents: each member posts under its own app, 
     },
   });
   try {
-    const qaSlack = new FakeSlack({ userId: 'UQA', botId: 'BQA' });
-    const beSlack = new FakeSlack({ userId: 'UBE', botId: 'BBE' });
-    await beckon.addApp('QA', qaSlack);
-    await beckon.addApp('BE', beSlack);
-
     await beckon.handleEvent(mention('SUBAGENTS ship the booking page'));
     await done();
-    // members are announced after a short pause (to group the ones started together), then report
-    await waitFor(() => beSlack.find('chat.update').length && qaSlack.find('chat.update').length && slack.find('chat.update').some((c) => /Design matches/.test(JSON.stringify(c.body.blocks))), { timeout: 8000 });
+    const key = Object.keys(state.threads)[0];
+    await waitFor(() => (state.threads[key].team ?? []).filter((m) => m.status === 'done').length === 3, { timeout: 8000 });
     assert.equal(claudeRuns().length, 1, 'one session: the team ran inside it');
     const run = claudeRuns()[0];
     const prompt = run.argv[run.argv.indexOf('--append-system-prompt') + 1];
     assert.match(prompt, /dev \(subagent_type "senior-dev"\)/);
+    assert.match(prompt, /Only your own messages reach Slack/);
     const dirs = run.argv.flatMap((a, i) => (a === '--plugin-dir' ? [run.argv[i + 1]] : []));
     assert.deepEqual(dirs, [skills.pm, skills.dev, skills.qa], 'the lead loads every member skill folder, once each');
-    assert.match(prompt, /in the same message, so they run at the same time/);
+    const defined = JSON.parse(run.argv[run.argv.indexOf('--agents') + 1]);
+    assert.deepEqual(defined, { designer: { description: 'UI review', prompt: 'You review screens against the design system.' } }, 'an agent with a prompt is defined by beckon');
 
-    // each member: a "working on" message under its app, then replaced by its last words
-    const beStart = beSlack.posts().find((p) => p.text === 'Build the page…');
-    assert.ok(beStart, 'dev posts through its own app when it starts');
-    const beDone = beSlack.find('chat.update').map((c) => c.body).find((b) => /Built the page in PR #7/.test(JSON.stringify(b.blocks)));
-    assert.ok(beDone, 'dev\'s report replaces its working message');
-    assert.match(JSON.stringify(beDone.blocks), /<@UQA> to check it/, 'its @qa is a real mention');
-    assert.ok(!JSON.stringify(beDone.blocks).includes('Working on it'), 'only its last words');
-    const qaDone = qaSlack.find('chat.update').map((c) => c.body).find((b) => /Checked: 3 of 3 pass/.test(JSON.stringify(b.blocks)));
-    assert.ok(qaDone, 'a foreground member posts the report from the Agent tool result');
-    assert.ok(/login ok/.test(JSON.stringify(qaDone.blocks)) && !/agentId|usage|hand-back/.test(JSON.stringify(qaDone.blocks)), 'only the report, without the frame');
-    assert.ok(!slack.posts().some((p) => /Look around/.test(p.text)), 'a subagent that is not a project agent gets no message');
-
-    const plan = slack.posts().filter((p) => /Plan: dev builds and qa checks together/.test(JSON.stringify(p.blocks)));
-    assert.equal(plan.length, 1, 'one plan message for the members started together');
-    assert.match(JSON.stringify(plan[0].blocks), /<@UBE>: Build the page/);
-    assert.match(JSON.stringify(plan[0].blocks), /3 working at the same time/);
-    const uiWorking = slack.posts().findIndex((p) => p.text === 'Review the page…');
-    assert.ok(uiWorking > slack.posts().indexOf(plan[0]), 'members are announced after the plan');
-    assert.ok(slack.find('chat.update').some((c) => /Design matches the system/.test(JSON.stringify(c.body.blocks))), 'a background member\'s report from its agent-message');
-    assert.match(prompt, /First decide who the work really needs/);
+    // Slack: the lead's progress card and its report, nothing posted by or for members
+    const messages = slack.posts().map((p) => p.text);
+    assert.deepEqual(messages.filter((t) => !/^Working…$|Team done/.test(t)), [], 'only the progress card and the lead\'s report');
+    assert.ok(!JSON.stringify(slack.posts().map((p) => p.blocks)).includes('3 of 3 pass\\nlogin ok'), 'no member report in full');
     const report = slack.posts().find((p) => /Team done/.test(p.text));
     assert.match(report.text, /^<@U1> Team done/, 'the lead\'s report mentions the person who asked');
+    const card = JSON.stringify(report.blocks);
+    assert.match(card, /dev: Build the page/, 'each member is a line on the card');
+    assert.match(card, /Built the page in PR #7/, 'ticked off with its report\'s first line');
+
+    // beckon desktop: one record per member task, with the whole report
+    const team = state.threads[key].team;
+    assert.deepEqual(team.map((m) => m.agent).sort(), ['designer', 'dev', 'qa']);
+    const qa = team.find((m) => m.agent === 'qa');
+    assert.match(qa.report, /Checked: 3 of 3 pass/);
+    assert.ok(/login ok/.test(qa.report) && !/agentId|usage|hand-back/.test(qa.report), 'only the report, without the frame');
+    assert.match(team.find((m) => m.agent === 'designer').report, /Design matches the system/, 'a background member\'s report from its agent-message');
+    assert.ok(team.every((m) => m.startedAt && m.endedAt >= m.startedAt));
+    assert.ok(!team.some((m) => /Look around/.test(m.task)), 'a subagent that is not a project agent has no record');
   } finally {
     await close();
   }
