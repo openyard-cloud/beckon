@@ -121,6 +121,8 @@ export function validateConfig(raw) {
       const agents = agentsConfig(p.agents, at, isStringArray(channels) ? channels : [], errors);
       if (p.defaultAgent !== undefined && !agents[p.defaultAgent]) errors.push(`${at}.defaultAgent: "${p.defaultAgent}" is not one of this project's agents`);
       if (p.lead !== undefined && !agents[p.lead]) errors.push(`${at}.lead: "${p.lead}" is not one of this project's agents`);
+      // The lead is who people talk to in Slack: it posts as beckon itself, with its name above.
+      else if (typeof p.lead === 'string') agents[p.lead].lead = true;
       projects[name] = {
         name,
         path,
