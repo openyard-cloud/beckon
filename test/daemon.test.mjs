@@ -995,14 +995,14 @@ test('a run is reminded to stop the servers, containers and simulators it starte
   }
 });
 
-test('the connectors a run starts with are kept per project: status, since when, and when they last worked', async () => {
+test('the connectors a run starts with are recorded: status, since when, and when they last worked', async () => {
   let clock = 1_000;
   const servers = [{ name: 'claude.ai Slack', status: 'connected', source: 'claudeai' }, { name: 'claude.ai Notion', status: 'needs-auth', source: 'claudeai' }];
   const { beckon, state, done, close } = await setup({ env: { FAKE_MCP_SERVERS: JSON.stringify(servers) }, beckonOptions: { now: () => clock } });
   try {
     await beckon.handleEvent(mention('hello'));
     await done();
-    const first = state.connections.proj;
+    const first = state.connections;
     assert.equal(first.at, 1_000);
     assert.deepEqual(first.servers.find((x) => x.name === 'claude.ai Slack'), { name: 'claude.ai Slack', source: 'claudeai', status: 'connected', since: 1_000, lastOk: 1_000 });
     assert.equal(first.servers.find((x) => x.name === 'claude.ai Notion').lastOk, null, 'never connected');
@@ -1016,10 +1016,44 @@ test('the connectors a run starts with are kept per project: status, since when,
     ]);
     clock = 9_000;
     beckon.noteConnections('proj', [{ name: 'claude.ai Slack', status: 'needs-auth' }, { name: 'peekaboo', status: 'connected', source: 'dynamic' }, { name: 'claude.ai Notion', status: 'pending' }]);
-    const now = Object.fromEntries(state.connections.proj.servers.map((x) => [x.name, x]));
+    const now = Object.fromEntries(state.connections.servers.map((x) => [x.name, x]));
     assert.deepEqual([now['claude.ai Slack'].status, now['claude.ai Slack'].since, now['claude.ai Slack'].lastOk], ['needs-auth', 5_000, 1_000]);
     assert.deepEqual([now['claude.ai Notion'].status, now['claude.ai Notion'].since], ['needs-auth', 1_000]);
     assert.deepEqual([now.peekaboo.status, now.peekaboo.lastOk], ['connected', 9_000]);
+  } finally {
+    await close();
+  }
+});
+
+test('connectors are kept once for the account; a server only some projects add lists them', async () => {
+  let clock = 1_000;
+  const { beckon, state, close } = await setup({ beckonOptions: { now: () => clock } });
+  try {
+    beckon.noteConnections('proj', [{ name: 'claude.ai Slack', status: 'connected', source: 'claudeai' }, { name: 'peekaboo', status: 'connected', source: 'dynamic' }]);
+    clock = 2_000;
+    beckon.noteConnections('other', [{ name: 'claude.ai Slack', status: 'needs-auth', source: 'claudeai' }, { name: 'peekaboo', status: 'pending', source: 'dynamic' }]);
+    const by = Object.fromEntries(state.connections.servers.map((x) => [x.name, x]));
+    assert.deepEqual([by['claude.ai Slack'].status, by['claude.ai Slack'].since, by['claude.ai Slack'].lastOk, by['claude.ai Slack'].projects], ['needs-auth', 2_000, 1_000, undefined]);
+    assert.deepEqual([by.peekaboo.status, by.peekaboo.projects], ['connected', ['other', 'proj']]);
+  } finally {
+    await close();
+  }
+});
+
+test('the Claude account: who is signed in, the plan, and when the sign-in runs out', async () => {
+  const { pickAccount, readAccount } = await import('../src/account.mjs');
+  const status = { loggedIn: true, authMethod: 'claude.ai', email: 'a@b.co', orgId: 'x', orgName: 'Org', subscriptionType: 'team', loginExpiresAt: '2026-12-14T02:35:30.479Z', configDirectory: '/x' };
+  assert.deepEqual(pickAccount(status), { loggedIn: true, authMethod: 'claude.ai', email: 'a@b.co', orgName: 'Org', plan: 'team', loginExpiresAt: Date.parse('2026-12-14T02:35:30.479Z') });
+  const exec = (bin, args, opts, cb) => cb(null, JSON.stringify(status));
+  assert.equal((await readAccount({ exec })).plan, 'team');
+  await assert.rejects(readAccount({ exec: (b, a, o, cb) => cb(new Error('not found'), '') }));
+
+  let clock = 5_000;
+  const { beckon, state, close } = await setup({ beckonOptions: { now: () => clock, readAccount: async () => pickAccount(status) } });
+  try {
+    await beckon.checkAccount();
+    assert.equal(state.account.email, 'a@b.co');
+    assert.equal(state.account.at, 5_000);
   } finally {
     await close();
   }
