@@ -8,6 +8,7 @@
 //   SLOW            finish after 0.7 seconds
 //   SLEEP           wait until killed
 //   TABS            open a browser tab, then close it only when the Stop hook asks
+//   LEFTOVERS       use a tool, then end the turn through the Stop hook (up to 3 tries)
 //   SECRET          ask beckon for a password with bin/beckon-secret.mjs and report the result
 //   ATTACH:<file>   send a file to the thread with bin/beckon-attach.mjs and report the result
 //   SECRETRUN       ask beckon for a value for a command (--file --run) and report its output
@@ -99,6 +100,15 @@ if (run || perm) {
   emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 's1', name: 'Bash', input: { command: `node ${script} --label "Apple ID password"` } }] } });
   const r = spawnSync(process.execPath, [script, '--label', 'Apple ID password', '--kind', 'password', '--app', 'Google Chrome', '--domain', 'apple.com'], { encoding: 'utf8', env: process.env });
   emit({ type: 'result', subtype: 'success', is_error: false, result: `secret: ${r.stdout.trim()}`, num_turns: 2 });
+} else if (prompt.includes('LEFTOVERS')) {
+  runHook('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'pnpm dev' } });
+  const reminders = [];
+  for (let i = 0; i < 3; i++) {
+    const stop = runHook('Stop', { stop_hook_active: i > 0 });
+    if (stop?.decision !== 'block') break;
+    reminders.push(stop.reason);
+  }
+  emit({ type: 'result', subtype: 'success', is_error: false, result: `reminded ${reminders.length}: ${reminders.join(' | ')}`, num_turns: 2 });
 } else if (prompt.includes('TABS')) {
   const tool = (id, name, input, text) => {
     emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
