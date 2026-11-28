@@ -28,7 +28,7 @@ export const CONFIG_TEMPLATE = {
   keepDays: 7,
 };
 
-const ENV_TEMPLATE = `# beckon reads these at start. Keep this file private (chmod 600).
+export const ENV_TEMPLATE = `# beckon reads these at start. Keep this file private (chmod 600).
 # Bot token: Slack app > OAuth & Permissions > Bot User OAuth Token.
 SLACK_BOT_TOKEN=
 # App token: Slack app > Basic Information > App-Level Tokens, with the connections:write scope.

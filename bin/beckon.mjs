@@ -9,7 +9,8 @@ const [cmd, sub, ...rest] = process.argv.slice(2);
 const HELP = `beckon ${pkg.version}: run Claude Code from Slack on this machine
 
 Usage:
-  beckon init                 create ~/.beckon/config.json and ~/.beckon/env
+  beckon init                 guided setup: Slack app, tokens, first project, a hello in Slack
+  beckon init --files         only create ~/.beckon/config.json and ~/.beckon/env to edit by hand
   beckon manifest             print the Slack app manifest (paste it at api.slack.com/apps)
   beckon doctor               check node, claude, git, the config and the Slack tokens
   beckon start                run in the foreground
@@ -23,15 +24,46 @@ Options for "service install":
 
 Set BECKON_HOME to keep the config somewhere other than ~/.beckon.`;
 
+async function installService(flags) {
+  const service = await import('../src/service.mjs');
+  const paths = homePaths(beckonHome());
+  let grace = 30;
+  try {
+    const { loadConfig } = await import('../src/config.mjs');
+    grace = loadConfig(paths.config).shutdownGraceMinutes;
+  } catch {
+    /* no config yet: use the default */
+  }
+  const { file, notes } = await service.installService({
+    bin: fileURLToPath(import.meta.url),
+    logsDir: paths.logs,
+    caffeinate: !flags.includes('--no-caffeinate'),
+    stopSeconds: grace * 60 + 60,
+  });
+  console.log(`Wrote ${file}`);
+  for (const n of notes) console.log(n);
+}
+
 async function main() {
   switch (cmd) {
     case 'init': {
+      if (sub !== '--files' && process.stdin.isTTY && process.stdout.isTTY) {
+        const { guidedInit, terminalIO } = await import('../src/wizard.mjs');
+        const io = terminalIO();
+        try {
+          const ok = await guidedInit({ io, install: () => installService([]) });
+          process.exitCode = ok ? 0 : 1;
+        } finally {
+          io.close();
+        }
+        return;
+      }
       const { init } = await import('../src/setup.mjs');
       const { paths, made } = init();
       for (const f of made) console.log(`Created ${f}`);
       if (!made.length) console.log(`Already set up in ${paths.home}`);
       console.log(`
-Next:
+Next (or run "beckon init" in a terminal to be guided through these):
   1. Create the Slack app: https://api.slack.com/apps?new_app=1 > From a manifest > paste "beckon manifest".
   2. Install it to your workspace. Copy the Bot User OAuth Token (xoxb-...) into ${paths.env}.
   3. Basic Information > App-Level Tokens > generate one with connections:write. Copy it (xapp-...) into the same file.
@@ -64,22 +96,7 @@ Next:
     case 'service': {
       const service = await import('../src/service.mjs');
       if (sub === 'install') {
-        const paths = homePaths(beckonHome());
-        let grace = 30;
-        try {
-          const { loadConfig } = await import('../src/config.mjs');
-          grace = loadConfig(paths.config).shutdownGraceMinutes;
-        } catch {
-          /* no config yet: use the default */
-        }
-        const { file, notes } = await service.installService({
-          bin: fileURLToPath(import.meta.url),
-          logsDir: paths.logs,
-          caffeinate: !rest.includes('--no-caffeinate'),
-          stopSeconds: grace * 60 + 60,
-        });
-        console.log(`Wrote ${file}`);
-        for (const n of notes) console.log(n);
+        await installService(rest);
       } else if (sub === 'restart') {
         console.log('Restarting. Running tasks get to finish first (shutdownGraceMinutes).');
         await service.restartService();

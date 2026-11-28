@@ -39,24 +39,35 @@ Mention `@beckon` with a task. It starts Claude Code in a fresh git worktree of 
 
 ## Set up
 
-1. **Install**
+```sh
+npm install -g github:openyard-cloud/beckon
+cd ~/code/myapp      # a repository you want beckon to work on
+beckon init
+```
 
-   ```sh
-   npm install -g github:openyard-cloud/beckon
-   beckon init
-   ```
+`beckon init` walks you through the rest in about five minutes:
 
-   This creates `~/.beckon/config.json` and `~/.beckon/env`.
+1. It checks that Claude Code is installed and logged in.
+2. It opens Slack's page for a new app with beckon's manifest filled in. You press Create and Install, then paste the two tokens it asks for. Each token is checked with Slack before it is saved in `~/.beckon/env`, which only you can read. Tokens are not shown while you paste them.
+3. It asks which repository is the first project (the one you are in, by default) and what to call it.
+4. You send `@beckon hello` in the channel for that project (Slack offers to invite beckon), or a direct message. beckon learns your member ID and the channel from that message and answers in the thread, so there are no IDs to look up.
+5. It writes `~/.beckon/config.json`, runs `beckon doctor`, and offers to keep beckon running in the background.
 
-2. **Create the Slack app.** Open <https://api.slack.com/apps?new_app=1>, choose *From a manifest*, and paste the output of `beckon manifest`. Install the app to your workspace.
+Run it again to add another project or change the Slack app; it keeps what is already set up.
+
+### Setting up by hand
+
+`beckon init --files` (or `beckon init` without a terminal, as in a script) only creates `~/.beckon/config.json` and `~/.beckon/env` for you to fill in:
+
+1. **Create the Slack app.** Open <https://api.slack.com/apps?new_app=1>, choose *From a manifest*, and paste the output of `beckon manifest`. Install the app to your workspace.
    - Copy *OAuth & Permissions > Bot User OAuth Token* (`xoxb-...`) into `~/.beckon/env` as `SLACK_BOT_TOKEN`.
    - Under *Basic Information > App-Level Tokens*, generate a token with the `connections:write` scope. Copy it (`xapp-...`) into the same file as `SLACK_APP_TOKEN`.
 
-3. **Configure** `~/.beckon/config.json`: your Slack member ID (*profile > ⋯ > Copy member ID*) and at least one project. You can add more projects and channels from Slack later (see [Managing projects from Slack](#managing-projects-from-slack)).
+2. **Configure** `~/.beckon/config.json`: your Slack member ID (*profile > ⋯ > Copy member ID*) and at least one project. You can add more projects and channels from Slack later (see [Managing projects from Slack](#managing-projects-from-slack)).
 
-4. **Invite beckon** into each project channel with `/invite @beckon`.
+3. **Invite beckon** into each project channel with `/invite @beckon`.
 
-5. **Check and run**
+4. **Check and run**
 
    ```sh
    beckon doctor           # checks node, claude login, git, config and both tokens
